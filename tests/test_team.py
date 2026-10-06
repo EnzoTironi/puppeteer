@@ -289,6 +289,28 @@ class TeamTest(unittest.TestCase):
         self.assertEqual(result["status"], "replied")
         self.assertEqual(result["reply"], "Completed before cancellation")
 
+    def test_stopping_immediately_after_a_reply_retires_the_worker_and_preserves_the_answer(self):
+        receipt = self.ask(1)
+        job = self.team.claim()
+        with patch.object(self.team, "ready", return_value=True):
+            self.team.dispatch(job)
+        self.complete(receipt["request"], "Completed successfully")
+        self.assertEqual(self.bridge.stop(), {"paused": True, "cancelled": 0, "uncertain": 0})
+        self.assertEqual(self.bridge.result("cht_group", receipt["request"])["reply"], "Completed successfully")
+        self.assertEqual([cmd[2] for cmd in self.commands if cmd[1] == "kill"], [job["worker"]])
+        with self.bridge.ledger() as db:
+            self.assertEqual(db.execute("SELECT closed FROM team_jobs WHERE request=?", (receipt["request"],)).fetchone()[0], 1)
+        self.assertTrue((self.install / "run/eng/puppeteer-worktrees" / job["id"]).is_dir())
+
+    def test_stop_retires_an_unready_worker_without_rewriting_its_failure_as_cancellation(self):
+        receipt = self.ask(1)
+        job = self.team.claim()
+        with patch.object(self.team, "ready", return_value=False):
+            self.team.dispatch(job)
+        self.assertEqual(self.bridge.stop(), {"paused": True, "cancelled": 0, "uncertain": 0})
+        self.assertEqual(self.bridge.result("cht_group", receipt["request"])["status"], "not_ready")
+        self.assertEqual([cmd[2] for cmd in self.commands if cmd[1] == "kill"], [job["worker"]])
+
 
 class ReadinessTest(unittest.TestCase):
     def test_trust_screen_is_not_a_composer_and_never_receives_a_task(self):

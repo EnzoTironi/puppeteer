@@ -410,8 +410,9 @@ class Bridge:
             fcntl.flock(fd, fcntl.LOCK_EX)
             with self.ledger() as db:
                 rows = db.execute("""SELECT r.*,j.worker FROM requests r JOIN team_jobs j ON j.request=r.id
-                    WHERE r.target=? AND j.project=? AND r.chat IN (%s) AND r.status IN
-                    ('queued','dispatching','submitted','delivery_unknown','timed_out')""" % ",".join("?" for _ in config["chats"]),
+                    WHERE r.target=? AND j.project=? AND r.chat IN (%s) AND
+                    (r.status IN ('queued','dispatching','submitted','delivery_unknown','timed_out')
+                     OR r.status IN ('replied','not_ready','send_failed') AND j.closed=0 AND j.worker<>'')""" % ",".join("?" for _ in config["chats"]),
                     (config["agents"]["coder"], config["parallel"]["project"], *config["chats"])).fetchall()
             for row in rows:
                 if row["worker"]:
@@ -422,7 +423,7 @@ class Bridge:
                         uncertain += 1
                         continue
                 with self.ledger() as db:
-                    changed = db.execute("UPDATE requests SET status='cancelled' WHERE id=? AND status<>'replied'", (row["id"],)).rowcount
+                    changed = db.execute("UPDATE requests SET status='cancelled' WHERE id=? AND status IN ('queued','dispatching','submitted','delivery_unknown','timed_out')", (row["id"],)).rowcount
                     db.execute("UPDATE team_jobs SET closed=1,reply_key='' WHERE request=?", (row["id"],))
                 cancelled += changed
         finally:
