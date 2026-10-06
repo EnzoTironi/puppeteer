@@ -12,7 +12,7 @@ import { bindPuppeteerTurn, endPuppeteerTurn, registerPuppeteer } from '../plugi
 
 const owner = {chat:'cht_owner',message:'msg_owner',session:'agent:main:main',owner:true,prompt:'Set up Puppeteer on my Mac'};
 const guest = {chat:'cht_group',message:'msg_guest',session:'agent:main:plow:group:cht_group',owner:false,prompt:'/prompt Fix the failing test'};
-const member = {type:'member',uid:'mem_owner',role:'owner'};
+const member = {type:'member',uid:'mem_owner',role:'owner',provider_key:'+15550000001'};
 const self = {type:'agent',relationship:'self',line:{uid:'ln_p3'}};
 let server, base, directory, requests, responses, wire, chats, sources;
 const completed = value => ({status:'completed',exit_code:0,output:JSON.stringify(value)+'\n'});
@@ -85,7 +85,7 @@ test('guests, owner groups and forged owner source cannot install or pair',async
  assert.equal(wire.length,0);
 });
 test('sharing refuses another account, missing owner, forged target and changed group membership on resume',async()=>{
- chats.cht_other={uid:'cht_other',status:'active',participants:[{...member,uid:'mem_other'},self,{type:'member',uid:'mem_guest'}]};
+ chats.cht_other={uid:'cht_other',status:'active',participants:[{...member,uid:'mem_other',provider_key:'+15550000002'},self,{type:'member',uid:'mem_guest'}]};
  await assert.rejects(requests.setup(owner,{action:'share',target:'sam/demo:coder',group:'cht_other'}),/owner_and_agent_must_be_in_group/);
  await assert.rejects(requests.setup(owner,{action:'share',target:'sam/demo:coder; curl bad'}),/invalid_local_agent_id/);
  responses.push({status:'pending',reason:'awaiting_approval',handle:'prepare'});
@@ -98,6 +98,14 @@ test('group discovery exposes only groups belonging to this owner and deployment
  chats.cht_foreign={uid:'cht_foreign',status:'active',participants:[member,{...self,line:{uid:'ln_other'}},{type:'member',uid:'mem_guest'}]};
  const result=await requests.setup(owner,{action:'groups'});
  assert.deepEqual(result,{groups:[{uid:'cht_group',name:'Demo'}]}); assert.equal(wire.length,0);
+});
+test('the same owner is recognized across different chat-seat UIDs without granting a different person',async()=>{
+ chats.cht_group.participants[0]={...member,uid:'group_owner_seat',provider_key:'+1 (555) 000-0001'};
+ assert.deepEqual(await requests.setup(owner,{action:'groups'}),{groups:[{uid:'cht_group',name:'Demo'}]});
+ responses.push(completed({pairing_prepared:true}),{bytes:200},completed({configured:true,chats:['cht_owner','cht_group']}));
+ assert.equal((await requests.setup(owner,{action:'share',target:'sam/demo:coder',group:'cht_group'})).configured,true);
+ chats.cht_group.participants[0].provider_key='+15550000002';
+ assert.deepEqual(await requests.setup(owner,{action:'groups'}),{groups:[]});
 });
 test('signed dispatch uses original Plow text and never forwards cloud credentials or the source key',async()=>{
  responses.push(completed({request:'a'.repeat(32),agent:'coder',status:'submitted'}));

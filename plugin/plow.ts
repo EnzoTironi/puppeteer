@@ -10,6 +10,16 @@ function uid(value: unknown): string {
 }
 
 type Chat = { uid: string; name: string; participants: Record<string, unknown>[] };
+type Owner = { uid: string; handle?: string };
+function handle(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const compact = value.trim().replace(/[\s()-]/g, "");
+  return /^\+\d{10,15}$/.test(compact) ? compact : value.trim().toLowerCase();
+}
+function sameOwner(participant: Record<string, unknown>, owner: Owner): boolean {
+  return participant.type === "member" && participant.role === "owner" && owner.handle !== undefined
+    && handle(participant.provider_key) === owner.handle;
+}
 
 /** Only deployment credentials and authenticated Plow records supply authority. */
 export class Plow {
@@ -71,18 +81,20 @@ export class Plow {
     throw new Error("original_message_not_found");
   }
 
-  async owner(turn: Turn, signal?: AbortSignal): Promise<string> {
+  async owner(turn: Turn, signal?: AbortSignal): Promise<Owner> {
     if (!turn.owner || turn.session !== "agent:main:main") throw new Error("owner_main_dm_required");
     const chat = await this.chat(turn.chat, signal);
     const source = await this.source(turn, chat, signal);
     const sender = source.sender;
     if (chat.participants.length !== 2 || !object(sender)
       || !chat.participants.some(p => p.type === "member" && p.role === "owner" && p.uid === sender.uid)) throw new Error("owner_main_dm_required");
-    return uid(sender.uid);
+    const participant = chat.participants.find(p => p.type === "member" && p.role === "owner" && p.uid === sender.uid);
+    return { uid: uid(sender.uid), handle: handle(participant?.provider_key) };
   }
 
   async groups(turn: Turn, signal?: AbortSignal): Promise<Record<string, unknown>> {
     const owner = await this.owner(turn, signal);
+    if (!owner.handle) throw new Error("owner_handle_unavailable");
     const line = await this.lineUid(signal);
     const groups: { uid: string; name: string }[] = [];
     let cursor: string | undefined;
@@ -90,7 +102,7 @@ export class Plow {
       const value = await this.get("/chats?limit=100" + (cursor ? "&starting_after=" + uid(cursor) : ""), signal);
       if (!object(value) || !Array.isArray(value.data) || !value.data.every(object)) throw new Error("invalid_plow_chats");
       for (const chat of value.data) if (chat.status === "active" && Array.isArray(chat.participants) && chat.participants.every(object)
-        && chat.participants.length > 2 && chat.participants.some(p => p.type === "member" && p.role === "owner" && p.uid === owner)
+        && chat.participants.length > 2 && chat.participants.some(p => sameOwner(p, owner))
         && chat.participants.some(p => p.type === "agent" && p.relationship === "self" && object(p.line) && p.line.uid === line)) {
         groups.push({ uid: uid(chat.uid), name: typeof chat.display_name === "string" ? chat.display_name : uid(chat.uid) });
       }
@@ -106,7 +118,7 @@ export class Plow {
     const owner = await this.owner(turn, signal);
     if (!group) return [turn.chat];
     const chat = await this.chat(group, signal);
-    if (chat.participants.length <= 2 || !chat.participants.some(p => p.type === "member" && p.role === "owner" && p.uid === owner)) throw new Error("owner_and_agent_must_be_in_group");
+    if (chat.participants.length <= 2 || !chat.participants.some(p => sameOwner(p, owner))) throw new Error("owner_and_agent_must_be_in_group");
     return [turn.chat, group];
   }
 
