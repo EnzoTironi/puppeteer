@@ -119,6 +119,8 @@ chat grant, agent grant, source identity, age, and request deduplication.
 
 ## Group responses and parallel workers
 
+Puppeteer uses [Mac Guardian's warm, direct, practical personality](https://github.com/EnzoTironi/mac-guardian-agent/blob/f0b722431ea5a31fc4c14db7d1f8a8bf1c79c9cc/prompt/AGENTS.md), adapted to a shared coding team. It answers the request first, takes the next authorized step and reports confirmed results briefly. The marionettist stays in the visual branding. The same voice guides owner onboarding, fixed group status messages and native worker answers. Style never changes access or execution rules.
+
 Group replies use English plain text. Each coding result identifies the sender,
 a short request ID and the answering agent. For example:
 

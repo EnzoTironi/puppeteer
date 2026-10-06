@@ -23,6 +23,10 @@ test('pending work cannot claim success or invent approval, readiness or elapsed
   assert.doesNotMatch(text,/test.*passed|completed|owner.*approve|not ready|seconds/i);
  }
  assert.match(publicReply({...receipt,status:'awaiting_approval'},turn),/owner to approve.*Latch/);
+ const dispatching=publicReply({...receipt,status:'dispatching'},turn);
+ assert.match(dispatching,/Delivery isn't confirmed yet/);
+ assert.doesNotMatch(dispatching,/accepted|Sent to|delivered/i);
+ assert.match(publicReply({...receipt,status:'submitted'},turn),/coder accepted your task/);
 });
 test('every failure gives an accurate action and never a claimed coding result',()=>{
  const cases=[['not_ready',/didn't accept/],['send_failed',/send failure/],['timed_out',/expired after 15 minutes/]];

@@ -18,7 +18,7 @@ export function promptCommand(prompt: string): PromptCommand {
   return { kind: "task" };
 }
 
-export const promptHelp = "I connect this group to the coding team the owner shared.\n\n/prompt agents\n/prompt Fix the failing test\n/prompt status REQUEST_ID\n\nIn parallel mode, each task gets its own worker. Extra tasks wait in the queue. Regular group chat is ignored.";
+export const promptHelp = "I'm Puppeteer, your link to the coding team the owner shared. Start your request with /prompt.\n\n/prompt agents\n/prompt Fix the failing test\n/prompt status REQUEST_ID\n\nIn parallel mode, each task gets its own worker. Extra tasks wait in the queue. I'll stay quiet during regular group chat.";
 
 function errorReply(error: string): string {
   if (["chat_not_shared", "agent_not_shared", "request_not_shared", "owner_main_dm_required"].includes(error)) {
@@ -59,8 +59,9 @@ export function publicReply(result: Record<string, unknown>, turn: Turn): string
     case "queue_full": return wrap("The task queue is full. I didn't accept this task. Please try a new /prompt after some replies arrive.");
     case "busy": return wrap("An earlier request has this session reserved. I didn't send this task. Wait for its reply, then send your /prompt again.");
     case "awaiting_approval": return wrap("Waiting for the Mac owner to approve this operation in Latch." + resume);
-    case "submitted": case "dispatching": return wrap("Sent to " + alias + ". I'm still waiting for its reply." + resume);
-    case "pending": case "running": return wrap("This request is still pending. I haven't received the coding reply yet." + resume);
+    case "submitted": return wrap(alias + " accepted your task. I'm waiting for its reply." + resume);
+    case "dispatching": return wrap("I'm handing this request to " + alias + ". Delivery isn't confirmed yet." + resume);
+    case "pending": case "running": return wrap("I'm still waiting for your coding reply." + resume);
     case "delivery_unknown": return wrap("I couldn't confirm delivery. It may already be running, so I won't resend it." + resume);
     case "not_ready": return wrap(alias + " didn't accept this task. The owner should check the session in MyPlow before you try again.");
     case "send_failed": return wrap("MyPlow reported a send failure. I haven't confirmed execution and won't automatically resend this task.");
