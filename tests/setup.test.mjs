@@ -190,3 +190,68 @@ test('parallel pairing keeps owner-selected Boss, project and worker limit, and 
  assert.deepEqual(wire.at(-1).arguments.argv,['puppeteer-bridge','stop']);
  await assert.rejects(requests.setup(guest,{action:'stop'}),/owner_main_dm_required/);
 });
+
+test('easy onboarding prepares a group workspace with fixed arguments, then shares its verified returned IDs',async()=>{
+ responses.push(completed({demo_prepared:true,target:'sam/main:Boss',project:'sam/puppeteer-demo-012345:coder',boss_created:false,cwd:'/private/not-for-the-model',source_key:'private-fixture'}));
+ const prepared=await requests.setup(owner,{action:'demo',group:'cht_group'});
+ assert.equal(prepared.demo_prepared,true);assert.equal(prepared.workers,4);assert.equal(prepared.next,'share');
+ assert.equal(prepared.boss_created,false);
+ assert.ok(!JSON.stringify(prepared).includes('/private'));assert.ok(!JSON.stringify(prepared).includes('private-fixture'));
+ assert.deepEqual(wire[0].arguments.argv,['puppeteer-bridge','demo','--group','cht_group']);
+ assert.equal(wire[0].arguments.network,true);
+ assert.equal(wire.length,1,'preparing alone does not write pairing grants');
+ responses.push(completed({pairing_prepared:true}),{bytes:200},completed({configured:true,chats:['cht_owner','cht_group']}));
+ const shared=await requests.setup(owner,{action:'share',target:prepared.target,project:prepared.project,workers:4,group:'cht_group'});
+ assert.equal(shared.configured,true);
+ const config=JSON.parse(wire.find(row=>row.name==='plow_write_file').arguments.content);
+ assert.equal(config.target,prepared.target);assert.deepEqual(config.parallel,{project:prepared.project,workers:4});
+});
+test('demo creation resumes its original Latch job across restart and verifies the group again',async()=>{
+ const body=JSON.stringify({demo_prepared:true,target:'sam/demo:Boss',project:'sam/demo:coder',boss_created:true});
+ responses.push({status:'running',handle:'demo-job',output:body.slice(0,20),output_length:20},
+  {status:'completed',exit_code:0,output:body.slice(20)+'\n'});
+ const receipt=await requests.setup(owner,{action:'demo',group:'cht_group'});
+ assert.equal(receipt.status,'running');
+ requests=new Requests(new Latch('latch-only-token',base+'/mcp'),directory,undefined,new Plow(base,'cloud-only-token'));
+ const result=await requests.result(owner,receipt.request);
+ assert.equal(result.demo_prepared,true);assert.equal(result.boss_created,true);
+ assert.deepEqual(wire.map(row=>row.name),['plow_run_command','plow_get_output']);
+ assert.deepEqual(wire[1].arguments,{handle:'demo-job',since:20});
+});
+test('demo setup cannot be reused to create resources for a second group or a different Boss',async()=>{
+ chats.cht_second={...chats.cht_group,uid:'cht_second'};
+ responses.push(completed({demo_prepared:true,target:'sam/main:Boss',project:'sam/demo:coder',boss_created:false}));
+ const first=await requests.setup(owner,{action:'demo',group:'cht_group'});
+ assert.deepEqual(await requests.setup(owner,{action:'demo',group:'cht_group'}),first);
+ await assert.rejects(requests.setup(owner,{action:'demo',group:'cht_second'}),/setup_message_already_used/);
+ await assert.rejects(requests.setup(owner,{action:'demo',group:'cht_group',target:'sam/other:Boss'}),/setup_message_already_used/);
+ assert.equal(wire.length,1);
+});
+test('guests, forged owners and groups without the owner cannot create a demo Boss or project',async()=>{
+ for(const turn of [guest,{...guest,owner:true}, {...owner,owner:false}, {...owner,session:guest.session}])
+  await assert.rejects(requests.setup(turn,{action:'demo',group:'cht_group'}),/owner_main_dm_required/);
+ chats.cht_group.participants[0]={...member,provider_key:'+15550000002'};
+ await assert.rejects(requests.setup(owner,{action:'demo',group:'cht_group'}),/owner_and_agent_must_be_in_group/);
+ assert.equal(wire.length,0);
+});
+test('a pending demo does not continue after group membership is revoked',async()=>{
+ responses.push({status:'pending',reason:'awaiting_approval',handle:'demo-approval'});
+ const first=await requests.setup(owner,{action:'demo',group:'cht_group'});
+ chats.cht_group.participants=chats.cht_group.participants.filter(p=>p.uid!=='mem_owner');
+ await assert.rejects(requests.result(owner,first.request),/owner_and_agent_must_be_in_group/);
+ assert.equal(wire.length,1);
+});
+test('the SDK demo tool rejects raw project paths, arbitrary commands and extra project selections',async()=>{
+ const tools=[],hooks=new Map();globalThis.__puppeteerRequests=requests;
+ registerPuppeteer({on:(n,f)=>hooks.set(n,f),registerTool:f=>tools.push(f)});
+ const factory=tools.find(f=>f.create({}).name==='puppeteer_setup');
+ const ctx={messageChannel:'plow',agentAccountId:'chat',nativeChannelId:owner.chat,requesterSenderId:'plow-owner',senderIsOwner:true,sessionKey:owner.session,assertInvocationCurrent:()=>{}};
+ bindPuppeteerTurn('run-demo',owner);
+ for(const args of [{action:'demo'}, {action:'demo',group:'../bad'}, {action:'demo',group:'cht_group',path:'/private'},
+  {action:'demo',group:'cht_group',project:'sam/private:coder'},{action:'demo',group:'cht_group',workers:8},
+  {action:'demo',group:'cht_group',target:'sam/main:Boss; touch nope'}]) {
+  hooks.get('before_tool_call')({toolName:'puppeteer_setup',toolCallId:'call-demo',runId:'run-demo'},{sessionKey:owner.session});
+  assert.equal((await factory.create(ctx).execute('call-demo',args)).isError,true);
+ }
+ endPuppeteerTurn('run-demo');assert.equal(wire.length,0);
+});

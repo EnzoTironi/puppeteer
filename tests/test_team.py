@@ -109,7 +109,7 @@ class TeamTest(unittest.TestCase):
             self.assertEqual(len(batch), 4)
             self.assertIsNone(self.team.claim())
             for job in reversed(batch):
-                workspace = self.install / "run/puppeteer-worktrees" / job["id"]
+                workspace = self.install / "run/eng/puppeteer-worktrees" / job["id"]
                 self.assertEqual((workspace / "answer.txt").read_text(), "dirty source\n")
                 self.assertEqual((workspace / "notes.txt").read_text(), "untracked context\n")
                 self.assertFalse((workspace / ".env").exists())
@@ -141,8 +141,8 @@ class TeamTest(unittest.TestCase):
         with patch.object(self.team, "ready", return_value=True):
             self.team.dispatch(alice)
             self.team.dispatch(bob)
-        alice_work = self.install / "run/puppeteer-worktrees" / first["request"]
-        bob_work = self.install / "run/puppeteer-worktrees" / other["request"]
+        alice_work = self.install / "run/eng/puppeteer-worktrees" / first["request"]
+        bob_work = self.install / "run/eng/puppeteer-worktrees" / other["request"]
         (alice_work / "answer.txt").write_text("Alice's completed edit\n")
         (alice_work / "alice.txt").write_text("Alice's new file\n")
         (bob_work / "bob.txt").write_text("Bob's new file\n")
@@ -154,7 +154,7 @@ class TeamTest(unittest.TestCase):
         job = self.team.claim()
         with patch.object(self.team, "ready", return_value=True):
             self.team.dispatch(job)
-        continued = self.install / "run/puppeteer-worktrees" / followup["request"]
+        continued = self.install / "run/eng/puppeteer-worktrees" / followup["request"]
         self.assertEqual((continued / "answer.txt").read_text(), "Alice's completed edit\n")
         self.assertEqual((continued / "alice.txt").read_text(), "Alice's new file\n")
         self.assertFalse((continued / "bob.txt").exists())
@@ -175,6 +175,28 @@ class TeamTest(unittest.TestCase):
         restored = Team(Bridge(self.bridge.cfg, self.bridge.config_path), self.bridge.config())
         self.assertIsNone(restored.claim())
         self.assertEqual(len(self.jobs), 1)
+
+    def test_followup_preserves_a_participants_worktree_created_before_the_managed_path_update(self):
+        first = self.ask(1, "alice")
+        job = self.team.claim()
+        with patch.object(self.team, "ready", return_value=True):
+            self.team.dispatch(job)
+        managed = self.install / "run/eng/puppeteer-worktrees" / first["request"]
+        legacy = self.install / "run/puppeteer-worktrees" / first["request"]
+        legacy.parent.mkdir(parents=True)
+        self.git("worktree", "move", str(managed), str(legacy))
+        (legacy / "previous-work.txt").write_text("Keep Alice's older work\n")
+        self.complete(first["request"], "Alice's older completed result")
+        self.now += 3
+        self.team.retire_completed()
+        followup = self.ask(2, "alice")
+        next_job = self.team.claim()
+        with patch.object(self.team, "ready", return_value=True):
+            self.team.dispatch(next_job)
+        continued = self.install / "run/eng/puppeteer-worktrees" / followup["request"]
+        self.assertEqual((continued / "previous-work.txt").read_text(), "Keep Alice's older work\n")
+        self.assertIn("Alice's older completed result", self.jobs[next_job["id"]]["body"])
+        self.assertTrue(legacy.is_dir())
 
     def test_queue_capacity_and_expiry_are_explicit(self):
         for i in range(256):
@@ -222,7 +244,7 @@ class TeamTest(unittest.TestCase):
         self.assertEqual(self.bridge.stop(), {"paused": True, "cancelled": 2, "uncertain": 0})
         for receipt in (first, second):
             self.assertEqual(self.bridge.result("cht_group", receipt["request"])["status"], "cancelled")
-        self.assertTrue((self.install / "run/puppeteer-worktrees" / job["id"]).is_dir())
+        self.assertTrue((self.install / "run/eng/puppeteer-worktrees" / job["id"]).is_dir())
         self.assertEqual([cmd[2] for cmd in self.commands if cmd[1] == "kill"], [job["worker"]])
         with self.assertRaisesRegex(BridgeError, "demo_paused"):
             self.ask(3)

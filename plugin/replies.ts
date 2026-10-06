@@ -24,7 +24,7 @@ function errorReply(error: string): string {
   if (["chat_not_shared", "agent_not_shared", "request_not_shared", "owner_main_dm_required"].includes(error)) {
     return error === "request_not_shared"
       ? "I can't find that request in this conversation. Check the ID and use the group where you sent it."
-      : "This conversation doesn't have access to that session. The owner can choose the session and group in my private setup chat.";
+      : "This conversation doesn't have access to a coding workspace. The owner can connect this group from my private setup chat.";
   }
   if (error === "ambiguous_request_id") return "That short ID matches more than one request. Ask the owner for the full request ID.";
   if (error === "demo_paused") return "The owner has paused this demo. I did not accept a new task. The owner can enable sharing again in my private setup chat.";
