@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --experimental-strip-types --test tests/plugin.test.mjs tests/setup.test.mjs",
+    "test": "node --experimental-strip-types --test tests/plugin.test.mjs tests/setup.test.mjs tests/replies.test.mjs tests/groups.test.mjs",
     "typecheck": "node scripts/typecheck.mjs"
   },
   "devDependencies": {

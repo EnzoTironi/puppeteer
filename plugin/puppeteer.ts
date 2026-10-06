@@ -2,6 +2,8 @@ import type { OpenClawPluginApi, OpenClawPluginToolContext } from "openclaw/plug
 import { Latch, object } from "./latch.ts";
 import { Requests, type Setup, type Turn } from "./requests.ts";
 import { Plow } from "./plow.ts";
+import { Groups, type GroupDelivery } from "./groups.ts";
+import { publicReply } from "./replies.ts";
 
 export function isPrompt(body: string | null | undefined): boolean {
   return typeof body === "string" && /^\/prompt(?:[ \t\r\n]|$)/.test(body);
@@ -12,16 +14,33 @@ declare global {
   var __puppeteerTurns: Map<string, Turn> | undefined;
   var __puppeteerCalls: Map<string, BoundCall> | undefined;
   var __puppeteerRequests: Requests | undefined;
+  var __puppeteerReplies: Map<string, string> | undefined;
+  var __puppeteerGroups: Groups | undefined;
+  var __puppeteerGroupRequests: Requests | undefined;
 }
 // OpenClaw can load discovery and channel copies of the same plugin.
 const turns = globalThis.__puppeteerTurns ??= new Map<string, Turn>();
 const calls = globalThis.__puppeteerCalls ??= new Map<string, BoundCall>();
+const replies = globalThis.__puppeteerReplies ??= new Map<string, string>();
+export async function routePuppeteerGroup(turn: Turn, send: GroupDelivery, signal: AbortSignal): Promise<void> {
+  if (!globalThis.__puppeteerGroups) throw new Error("group_router_unavailable");
+  try { await globalThis.__puppeteerGroups.receive(turn, send, signal); }
+  catch (error) {
+    if (signal.aborted) return;
+    await send(turn.chat, publicReply({ error: error instanceof Error ? error.message : "group_request_failed" }, turn));
+  }
+}
+export async function recoverPuppeteerGroups(send: GroupDelivery, signal: AbortSignal): Promise<void> {
+  await globalThis.__puppeteerGroups?.recover(send, signal);
+}
 
 export function bindPuppeteerTurn(run: string, turn: Turn): void { turns.set(run, turn); }
 export function endPuppeteerTurn(run: string): void {
   turns.delete(run);
+  replies.delete(run);
   for (const [id, call] of calls) if (call.run === run) calls.delete(id);
 }
+export function puppeteerReply(run: string | undefined): string | undefined { return run ? replies.get(run) : undefined; }
 
 function params(value: unknown, key?: string): string {
   if (!object(value) || Object.keys(value).some(name => name !== key)) throw new Error("invalid_tool_arguments");
@@ -49,18 +68,24 @@ function currentTurn(context: OpenClawPluginToolContext<2>, id: string, allowOwn
   return { ...bound.turn, assertCurrent() {
     context.assertInvocationCurrent();
     if (turns.get(bound.run) !== bound.turn) throw new Error("verified_prompt_turn_required");
+  }, recordReply(result) {
+    context.assertInvocationCurrent();
+    if (turns.get(bound.run) !== bound.turn) throw new Error("verified_prompt_turn_required");
+    if (isPrompt(bound.turn.prompt)) replies.set(bound.run, publicReply(result, bound.turn));
   } };
 }
 
 function setupParams(value: unknown): Setup {
-  if (!object(value) || Object.keys(value).some(key => !["action", "target", "group"].includes(key))) throw new Error("invalid_setup_arguments");
-  if (value.action === "install" || value.action === "inspect" || value.action === "groups") {
+  if (!object(value) || Object.keys(value).some(key => !["action", "target", "group", "project", "workers"].includes(key))) throw new Error("invalid_setup_arguments");
+  if (value.action === "install" || value.action === "inspect" || value.action === "groups" || value.action === "stop") {
     if (Object.keys(value).length !== 1) throw new Error("invalid_setup_arguments");
     return { action: value.action };
   }
   if (value.action !== "share" || typeof value.target !== "string"
     || (value.group !== undefined && (typeof value.group !== "string" || !/^cht_[A-Za-z0-9_-]+$/.test(value.group)))) throw new Error("invalid_setup_arguments");
-  return { action: "share", target: value.target, group: value.group };
+  if (value.project !== undefined && (typeof value.project !== "string" || !/^[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$/.test(value.project))) throw new Error("invalid_setup_arguments");
+  if (value.workers !== undefined && (value.project === undefined || typeof value.workers !== "number" || !Number.isInteger(value.workers) || value.workers < 1 || value.workers > 8)) throw new Error("invalid_setup_arguments");
+  return { action: "share", target: value.target, group: value.group, ...(typeof value.project === "string" ? { project: value.project, workers: typeof value.workers === "number" ? value.workers : 4 } : {}) };
 }
 
 function macPaths(): { read: string[]; write: string[] } {
@@ -94,8 +119,13 @@ export function registerPuppeteer(api: OpenClawPluginApi): void {
     const id = event.toolCallId ?? context.toolCallId;
     if (id) calls.delete(id);
   });
+  const plow = new Plow(process.env.PLOW_API_BASE ?? "", process.env.PLOW_AGENT_TOKEN ?? "");
   const requests = globalThis.__puppeteerRequests ??= new Requests(new Latch(process.env.PLOW_MCP_BRIDGE_TOKEN ?? ""), process.env.PUPPETEER_STATE_DIR, macPaths(),
-    new Plow(process.env.PLOW_API_BASE ?? "", process.env.PLOW_AGENT_TOKEN ?? ""));
+    plow);
+  if (globalThis.__puppeteerGroupRequests !== requests) {
+    globalThis.__puppeteerGroups = new Groups(requests, plow, process.env.PUPPETEER_STATE_DIR ?? "/var/lib/plow/puppeteer");
+    globalThis.__puppeteerGroupRequests = requests;
+  }
   const tools = [
     { name: "puppeteer_agents", label: "List shared coding agents", key: undefined,
       description: "List the coding agents the owner shared with this current /prompt conversation. No access to other chats or private sessions." },
@@ -109,15 +139,18 @@ export function registerPuppeteer(api: OpenClawPluginApi): void {
       name: tool.name, label: tool.label, description: tool.description,
       parameters: { type: "object", additionalProperties: false, properties: tool.key ? { [tool.key]: { type: "string" } } : {}, ...(tool.key ? { required: [tool.key] } : {}) },
       async execute(id, args, signal) {
+        let turn: Turn | undefined;
         try {
+          turn = currentTurn(context, id, tool.name === "puppeteer_result");
           const value = params(args, tool.key);
-          const turn = currentTurn(context, id, tool.name === "puppeteer_result");
           const result = tool.name === "puppeteer_agents" ? await requests.agents(turn, signal)
             : tool.name === "puppeteer_ask" ? await requests.ask(turn, value, signal)
             : await requests.result(turn, value, signal);
-          return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+          turn.recordReply?.(result);
+          return { content: [{ type: "text", text: JSON.stringify({ ...result, ...(isPrompt(turn.prompt) ? { response_text: publicReply(result, turn) } : {}) }) }], details: result };
         } catch (error) {
           const result = { error: error instanceof Error ? error.message : "puppeteer_failed" };
+          try { turn?.recordReply?.(result); } catch { /* A finished turn cannot change its reply. */ }
           return { isError: true, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
         }
       },
@@ -125,10 +158,12 @@ export function registerPuppeteer(api: OpenClawPluginApi): void {
   }
   api.registerTool({ contextVersion: 2, create: context => ({
     name: "puppeteer_setup", label: "Set up Puppeteer on the owner's Mac",
-    description: "Owner's main private Plow DM only. install installs the fixed pinned connector through Latch, inspect lists existing MyPlow session IDs, groups lists this owner's groups containing Puppeteer, share exposes one selected native target as coder to this DM and optionally one selected group. share replaces previous grants. No terminal commands, paths, credentials or replacement prompts are accepted. Use puppeteer_result to resume any pending receipt, never repeat the installation or pairing.",
+    description: "Owner's main private Plow DM only. stop pauses the parallel demo, cancels queued requests and retires only its native workers while preserving worktrees. install installs the fixed pinned connector through Latch, inspect lists existing MyPlow session IDs, groups lists this owner's groups containing Puppeteer, share exposes one selected native target as coder. To enable parallel work, target must be an existing Boss, project must be an owner-selected existing coding session at a Git project root, and workers selects 1 to 8 workers, default 4. Each task uses a separate detached worktree under that Boss to this DM and optionally one selected group. share replaces previous grants. No terminal commands, paths, credentials or replacement prompts are accepted. Use puppeteer_result to resume any pending receipt, never repeat the installation or pairing.",
     parameters: { type: "object", additionalProperties: false, required: ["action"], properties: {
-      action: { type: "string", enum: ["install", "inspect", "groups", "share"] },
+      action: { type: "string", enum: ["install", "inspect", "groups", "share", "stop"] },
       target: { type: "string", description: "Required only for share: an exact native ID returned by inspect, selected by the owner." },
+      project: { type: "string", description: "Optional for parallel share: exact existing Claude/Codex project session ID from inspect, selected by the owner." },
+      workers: { type: "integer", minimum: 1, maximum: 8, description: "Parallel native worker limit. Requires project; default 4." },
       group: { type: "string", description: "Optional only for share: a chat UID returned by groups, selected by the owner. Omit to share only with this owner DM." },
     } },
     async execute(id, args, signal) {

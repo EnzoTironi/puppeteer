@@ -26,6 +26,7 @@ export class Plow {
   private readonly base: string;
   private readonly token: string;
   private line: Promise<string> | undefined;
+  private readonly pages = new Map<string, { time: number; value: Promise<unknown> }>();
   private readonly keys = new Map<string, Promise<string>>();
   constructor(base: string, token: string) { this.base = base.replace(/\/$/, ""); this.token = token; }
 
@@ -56,10 +57,18 @@ export class Plow {
     return { uid: id, name: typeof value.display_name === "string" ? value.display_name : id, participants: value.participants };
   }
 
-  private async source(turn: Turn, chat: Chat, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  private async source(turn: Turn, chat: Chat, signal?: AbortSignal, fresh = false): Promise<Record<string, unknown>> {
     let cursor: string | undefined;
-    for (let page = 0; page < 5; page++) {
-      const value = await this.get(`/chats/${uid(turn.chat)}/messages?limit=50${cursor ? "&starting_after=" + uid(cursor) : ""}`, signal);
+    for (let page = 0; page < 82; page++) {
+      const path = `/chats/${uid(turn.chat)}/messages?limit=50${cursor ? "&starting_after=" + uid(cursor) : ""}`;
+      const cached = this.pages.get(path);
+      let request = !fresh && cached && Date.now() - cached.time < 1000 ? cached.value : undefined;
+      if (!request) {
+        request = this.get(path, signal).catch(error => { this.pages.delete(path); throw error; });
+        this.pages.set(path, { time: Date.now(), value: request });
+        if (this.pages.size > 256) { const oldest = this.pages.keys().next().value; if (oldest) this.pages.delete(oldest); }
+      }
+      const value = await request;
       if (!object(value) || !Array.isArray(value.data) || !value.data.every(object)) throw new Error("invalid_plow_messages");
       const source = value.data.find(row => row.uid === turn.message);
       if (source) {
@@ -78,7 +87,13 @@ export class Plow {
       if (next === cursor) break;
       cursor = next;
     }
+    if (!fresh) return this.source(turn, chat, signal, true);
     throw new Error("original_message_not_found");
+  }
+
+  async group(turn: Turn, signal?: AbortSignal): Promise<void> {
+    const chat = await this.chat(turn.chat, signal);
+    if (chat.participants.length <= 2) throw new Error("chat_not_served_by_this_agent");
   }
 
   async owner(turn: Turn, signal?: AbortSignal): Promise<Owner> {

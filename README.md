@@ -1,8 +1,9 @@
 # Puppeteer
 
 Let people in a Plow conversation talk to the Claude Code and Codex agents
-running in MyPlow on your Mac. The local agent keeps its session and project,
-and its reply returns to the conversation that asked.
+running in MyPlow on your Mac. Use an existing session for one task at a time,
+or let your existing Boss supervise separate workers for a live group. Each
+reply returns to the participant and conversation that asked.
 
 Puppeteer is an OpenClaw variant built on the public Plow base image. Plow Chat
 carries the conversation; Plow Latch connects to the Mac; MyPlow's `mp send`
@@ -22,8 +23,8 @@ flowchart LR
 ## Connect an existing MyPlow Mac without a terminal
 
 Deploy Puppeteer on the **same Plow account** as your Mac's Latch. The Agent
-Index's 1-click button becomes available after the Plow admin admits the
-public image; until then, use the cloud deployment instructions below.
+Index's 1-click deployment is enabled for Puppeteer. Select the public listing
+and deploy it on a free line belonging to that account.
 
 Keep your existing MyPlow installation and running coding sessions. Keep
 Latch open and the Mac awake. Text Puppeteer privately:
@@ -56,8 +57,10 @@ If MyPlow is missing, install and authenticate it before this flow using its
 [upstream instructions](https://github.com/delattre1/mypeople). If Latch refuses
 an operation, Puppeteer reports the refusal; it does not bypass it.
 
-To stop sharing, remove `~/.config/puppeteer/bridge.json` on the Mac. This does
-not stop the coding sessions. Custom MyPlow homes can use owner-configured
+To stop group access without a terminal, ask Puppeteer privately to share
+only with your private DM. To revoke all connector access, remove
+`~/.config/puppeteer/bridge.json` on the Mac. This does not stop running coding
+sessions or erase their worktrees. Custom MyPlow homes can use owner-configured
 `PUPPETEER_MAC_READ_PATHS` and `PUPPETEER_MAC_WRITE_PATHS` JSON arrays in the
 cloud environment, with the selected runtime directory included for writes.
 
@@ -92,8 +95,10 @@ Mac, not automatically to Sam's.
 Only human messages that begin with the exact `/prompt` command are processed:
 
 ```text
-/prompt List the shared coding agents
+/prompt help
+/prompt agents
 /prompt Fix the failing test in the demo project
+/prompt status REQUEST_ID
 /prompt coder: Explain what this project does
 ```
 
@@ -101,14 +106,104 @@ Normal conversation, `/promptfoo`, and `/prompt` appearing inside a sentence
 are ignored before the model and are not forwarded to MyPlow. `/prompt` alone
 gets a usage example and never starts local work. The command is case sensitive
 and must be at the start of the message. Its prefix is removed before the
-verified task reaches the local coding session. Use `/prompt status RECEIPT`
-to resume an interrupted request in that same group.
+verified task reaches the local coding session. Use `/prompt status ID`
+to resume an interrupted request in that same group. The eight-character ID
+in the reply is sufficient; the full receipt remains valid. Use
+`/prompt status ID full` to read a long reply in full.
 
 The runtime binds each tool to its actual current chat and inbound message.
 Guests cannot supply replacement text, another chat/message ID, paths, shell
 commands, or Latch output handles. Pending approvals and running commands
 use private, conversation-bound receipts. The Mac also enforces the prefix,
 chat grant, agent grant, source identity, age, and request deduplication.
+
+## Group responses and parallel workers
+
+Group replies use English plain text. Each coding result identifies the sender,
+a short request ID and the answering agent. For example:
+
+```text
+Alex · #a1234567
+coder replied:
+
+Changed greeting.py. Ran python3 test_greeting.py: 1 test passed.
+```
+
+The delivery layer derives that text from the verified tool status and actual
+local answer. It drops free-form model commentary and fabricated result text.
+A submitted task is never described as completed. Only the actual Latch
+`awaiting_approval` state asks the Mac owner to approve.
+
+For an audience, enable parallel mode in the owner's private setup chat:
+
+```text
+Use my existing MyPlow Boss to supervise parallel demo workers.
+Use my dedicated demo project session. Start with four workers.
+```
+
+The owner chooses two existing native IDs from `inspect`: the Boss and a
+Claude Code or Codex project session at a Git root with at least one commit.
+The owner-only `share` tool accepts `target` for the Boss, `project` for that
+session, `workers` from 1 to 8, and the selected group. Four workers is the
+default. No terminal commands are needed to connect an existing Git project.
+A project without a Git commit needs preparation before parallel mode.
+
+Puppeteer verifies the original message, records it in a private SQLite queue,
+and starts separate native workers with `mp spawn --boss SELECTED_BOSS`.
+Each request gets a fresh detached Git worktree. A participant's first task
+starts from the selected project, including its tracked changes and untracked,
+non-ignored files. Their follow-up starts from their own last completed worktree
+and receives their previous task and actual reply as context. Other participants
+start independently. The worker
+uses the project's native Claude Code or Codex backend and returns the answer
+with its private per-request callback. The connector performs the routing;
+the Boss is the native parent and receives MyPlow lifecycle notifications.
+Puppeteer does not wait for the Boss model to relay every message.
+
+Up to the chosen number of workers run concurrently. One participant has one
+active task per conversation; their later tasks wait while other people can
+work. Up to 256 waiting tasks are accepted. Overflow receives an explicit
+queue-full response and is not accepted. Queued work expires after 15 minutes.
+Every result includes the original participant and eight-character request ID,
+so out-of-order replies still match the correct request.
+
+The phone group uses a fixed command router before the cloud model. The
+router sends a receipt, watches only that receipt, and posts the verified
+native answer automatically. It recovers pending receipt reads after gateway
+restart without sending another task. An uncertain phone delivery is never
+automatically repeated; `/prompt status ID` can retrieve its actual result.
+The Mac rechecks the current chat, Boss and project grants before disclosing
+results. Re-share only with the owner's private DM to revoke group access.
+
+Workers edit their own worktrees. They do not automatically merge, push or
+publish changes into the original project. Completed workers are retired
+through MyPlow; their worktrees remain available for the owner to review.
+The native agent still has its usual permissions: a worktree prevents routine
+edit collisions and is not a filesystem sandbox.
+
+Single-session mode remains available when `project` is omitted. One task
+reserves that existing target. Concurrent tasks receive an accurate busy
+response; they are not queued. Uncertain or timed-out session requests retain
+the reservation. Parallel workers with uncertain delivery retain their slot;
+the connector does not replace them while execution may still be running.
+The owner can privately say "Stop the parallel demo." The owner-only stop tool
+pauses new requests, cancels queued work and retires only that demo's workers.
+It reports any stop it could not confirm. Worktrees stay available for review.
+Sharing again explicitly resumes the demo. Native trust or login screens
+produce a not-ready response; Puppeteer never pastes a task into those screens.
+
+The channel keeps 4,096 handled IDs in its persistent checkpoint. Ordinary
+chat is ignored before any model or Mac operation. Help, agent lists and
+status checks never start a coding task. These are application limits,
+not claims about Apple's group-size limits or production throughput.
+
+For the stage, use an iMessage group whose members and bot are confirmed to
+send and receive in that same group. Apple distinguishes group iMessage from
+SMS: SMS responses can become individual messages instead of visible group
+replies. Check the actual participants, devices and transport before inviting
+the audience. [Apple's group-message guidance](https://support.apple.com/en-us/118236)
+explains the difference. A 100-participant simulated Plow group test does not
+prove that 100 physical iMessage participants are supported.
 
 ## Run the cloud agent locally
 

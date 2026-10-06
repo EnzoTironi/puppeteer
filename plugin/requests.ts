@@ -1,13 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Latch, object } from "./latch.ts";
 import { Plow } from "./plow.ts";
+import { promptCommand } from "./replies.ts";
 
-export type Turn = { chat: string; message: string; session: string; prompt: string; owner?: boolean; assertCurrent?: () => void };
-export type Setup = { action: "install" | "inspect" | "groups" } | { action: "share"; target: string; group?: string };
-type Action = { kind: "agents" } | { kind: "ask"; alias: string } | { kind: "install" } | { kind: "inspect" }
-  | { kind: "share"; target: string; chats: string[]; group?: string; phase: "prepare" | "write" | "pair" };
+export type Turn = { chat: string; message: string; session: string; prompt: string; sender?: string; background?: boolean; owner?: boolean; assertCurrent?: () => void; recordReply?: (result: Record<string, unknown>) => void };
+export type Setup = { action: "install" | "inspect" | "groups" | "stop" } | { action: "share"; target: string; group?: string; project?: string; workers?: number };
+type Action = { kind: "agents" } | { kind: "ask"; alias: string } | { kind: "install" } | { kind: "inspect" } | { kind: "stop" }
+  | { kind: "share"; target: string; chats: string[]; group?: string; project?: string; workers?: number; phase: "prepare" | "write" | "pair" };
 type Stage =
   | { kind: "unknown"; error: string }
   | { kind: "pending"; handle: string; reason: string }
@@ -20,13 +21,14 @@ function parseOperation(value: unknown): Operation {
   let action: Action;
   if (value.action.kind === "agents") action = { kind: "agents" };
   else if (value.action.kind === "ask" && typeof value.action.alias === "string") action = { kind: "ask", alias: value.action.alias };
-  else if (value.action.kind === "install" || value.action.kind === "inspect") action = { kind: value.action.kind };
+  else if (value.action.kind === "install" || value.action.kind === "inspect" || value.action.kind === "stop") action = { kind: value.action.kind };
   else if (value.action.kind === "share" && typeof value.action.target === "string" && Array.isArray(value.action.chats)
     && value.action.chats.every(c => typeof c === "string") && (value.action.group === undefined || typeof value.action.group === "string")
     && ["prepare", "write", "pair"].includes(String(value.action.phase))) {
     const phase = value.action.phase;
     if (phase !== "prepare" && phase !== "write" && phase !== "pair") throw new Error("invalid_request_state");
-    action = { kind: "share", target: value.action.target, chats: value.action.chats, group: value.action.group, phase };
+    action = { kind: "share", target: value.action.target, chats: value.action.chats, group: value.action.group, phase,
+      ...(typeof value.action.project === "string" ? { project: value.action.project, workers: typeof value.action.workers === "number" ? value.action.workers : 4 } : {}) };
   }
   else throw new Error("invalid_request_state");
   let stage: Stage;
@@ -44,19 +46,21 @@ function bridgeValue(stdout: string): Record<string, unknown> {
   const value: unknown = JSON.parse(line ?? "null");
   if (!object(value)) throw new Error("invalid_bridge_response");
   if (typeof value.error === "string") return { error: value.error };
+  if (value.paused === true && typeof value.cancelled === "number" && typeof value.uncertain === "number") return { paused: true, cancelled: value.cancelled, uncertain: value.uncertain };
   if (value.pairing_prepared === true) return { pairing_prepared: true };
   if (value.configured === true && Array.isArray(value.chats) && value.chats.every(c => typeof c === "string")) return { configured: true, agents: ["coder"], chats: value.chats };
   if (Array.isArray(value.local_agents)) return { local_agents: value.local_agents.map(row => {
     if (!object(row) || typeof row.target !== "string" || typeof row.backend !== "string" || typeof row.status !== "string") throw new Error("invalid_bridge_response");
-    return { target: row.target, backend: row.backend, status: row.status };
+    return { target: row.target, backend: row.backend, status: row.status, ...(row.role === "boss" ? { role: "boss" } : {}) };
   }) };
   if (Array.isArray(value.agents)) {
     return { agents: value.agents.map(row => {
       if (!object(row) || typeof row.alias !== "string" || typeof row.backend !== "string" || typeof row.status !== "string") throw new Error("invalid_bridge_response");
       return { alias: row.alias, backend: row.backend, status: row.status };
-    }) };
+    }), ...(value.mode === "parallel" && typeof value.workers === "number" ? { mode: "parallel", workers: value.workers } : {}) };
   }
-  if (typeof value.request !== "string" || !/^[a-f0-9]{32}$/.test(value.request) || typeof value.agent !== "string" || !["dispatching", "submitted", "delivery_unknown", "replied", "not_ready", "send_failed", "timed_out"].includes(String(value.status))) throw new Error("invalid_bridge_response");
+  if (["busy", "queue_full"].includes(String(value.status)) && typeof value.agent === "string") return { status: value.status, agent: value.agent };
+  if (typeof value.request !== "string" || !/^[a-f0-9]{32}$/.test(value.request) || typeof value.agent !== "string" || !["queued", "dispatching", "submitted", "delivery_unknown", "replied", "not_ready", "send_failed", "timed_out", "cancelled"].includes(String(value.status))) throw new Error("invalid_bridge_response");
   if (value.status === "replied" && typeof value.reply !== "string") throw new Error("invalid_bridge_response");
   return { request: value.request, agent: value.agent, status: value.status, ...(value.status === "replied" ? { reply: value.reply } : {}) };
 }
@@ -147,7 +151,7 @@ export class Requests {
     await this.send(id, op, "plow_run_command", {
       argv: ["puppeteer-bridge", ...argv], network: argv[0] === "ask", read_paths: this.paths.read,
       ...(argv[0] !== "agents" && argv[0] !== "discover" ? { write_paths: [...this.paths.write,
-        ...(["prepare", "pair"].includes(argv[0] ?? "") ? ["~/.config/puppeteer"] : [])] } : {}),
+        ...(["prepare", "pair", "stop"].includes(argv[0] ?? "") ? ["~/.config/puppeteer"] : [])] } : {}),
       wait_ms: argv[0] === "result" ? 9000 : 1000, goal: `Puppeteer: ${argv[0]} in approved conversation ${op.chat}`,
     }, signal);
   }
@@ -158,7 +162,8 @@ export class Requests {
         if (!this.plow) throw new Error("owner_setup_unavailable");
         op.action.phase = "write";
         await this.send(id, op, "plow_write_file", { path: `~/.config/puppeteer/pairing/${id}.json`,
-          content: JSON.stringify({ target: op.action.target, chats: op.action.chats, source_key: await this.plow.sourceKey(this.directory) }),
+          content: JSON.stringify({ target: op.action.target, chats: op.action.chats, source_key: await this.plow.sourceKey(this.directory),
+            ...(op.action.project ? { parallel: { project: op.action.project, workers: op.action.workers ?? 4 } } : {}) }),
           goal: "Puppeteer: pair this deployment with the owner's selected MyPlow session and conversations",
         }, signal);
       } else {
@@ -178,11 +183,11 @@ export class Requests {
     return this.exclusive(id, async () => {
       const previous = await this.read(id);
       if (previous) {
-        if (previous.action.kind === "share" && (input.action !== "share" || previous.action.target !== input.target || previous.action.group !== input.group)) throw new Error("setup_message_already_used");
+        if (previous.action.kind === "share" && (input.action !== "share" || previous.action.target !== input.target || previous.action.group !== input.group || previous.action.project !== input.project || previous.action.workers !== (input.project ? input.workers ?? 4 : undefined))) throw new Error("setup_message_already_used");
         return this.view(id, previous);
       }
-      const action: Action = input.action === "share" ? { kind: "share", target: input.target, group: input.group, chats, phase: "prepare" }
-        : input.action === "install" ? { kind: "install" } : { kind: "inspect" };
+      const action: Action = input.action === "share" ? { kind: "share", target: input.target, group: input.group, project: input.project, workers: input.project ? input.workers ?? 4 : undefined, chats, phase: "prepare" }
+        : input.action === "install" ? { kind: "install" } : input.action === "stop" ? { kind: "stop" } : { kind: "inspect" };
       const op: Operation = { chat: turn.chat, message: turn.message, created: Date.now(), action, stage: { kind: "unknown", error: "not_started" }, guard: turn.assertCurrent };
       if (input.action === "install") {
         const commit = process.env.PUPPETEER_BRIDGE_COMMIT;
@@ -192,7 +197,7 @@ export class Requests {
           read_paths: ["~/.config/mypeople"], write_paths: ["~/.local/bin", "~/.local/share/uv", "~/.cache/uv"], wait_ms: 1000,
           goal: "Puppeteer: install the pinned MIT MyPlow connector requested by the owner",
         }, signal);
-      } else await this.command(id, op, input.action === "inspect" ? ["discover"] : ["prepare", "--request", id], signal);
+      } else await this.command(id, op, input.action === "inspect" ? ["discover"] : input.action === "stop" ? ["stop"] : ["prepare", "--request", id], signal);
       await this.advance(id, op, signal);
       return this.view(id, op);
     });
@@ -208,6 +213,7 @@ export class Requests {
   async ask(turn: Turn, alias: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
     if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(alias)) throw new Error("invalid_agent_alias");
     if (!/^\/prompt[ \t\r\n]+\S/.test(turn.prompt)) throw new Error("prompt_text_required");
+    if (promptCommand(turn.prompt).kind !== "task") throw new Error("control_request_requires_matching_tool");
     const id = createHash("sha256").update(turn.chat + "\0" + turn.message).digest("hex").slice(0, 32);
     return this.exclusive(id, async () => {
       const previous = await this.read(id);
@@ -226,13 +232,30 @@ export class Requests {
     });
   }
 
-  async result(turn: Turn, id: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
-    if (!/^[a-f0-9]{32}$/.test(id)) throw new Error("request_not_shared");
+  private async resolveRequest(chat: string, id: string): Promise<string> {
+    if (!/^(?:[a-f0-9]{8}|[a-f0-9]{32})$/.test(id)) throw new Error("request_not_shared");
+    if (id.length === 8) {
+      let files: string[];
+      try { files = await readdir(this.directory); }
+      catch (error) { if (error instanceof Error && "code" in error && error.code === "ENOENT") throw new Error("request_not_shared"); throw error; }
+      const matches: string[] = [];
+      for (const file of files.filter(name => /^[a-f0-9]{32}\.json$/.test(name) && name.startsWith(id))) {
+        const full = file.slice(0, -5);
+        if ((await this.read(full))?.chat === chat) matches.push(full);
+      }
+      if (matches.length !== 1) throw new Error(matches.length ? "ambiguous_request_id" : "request_not_shared");
+      id = matches[0] ?? "";
+    }
+    return id;
+  }
+
+  async result(turn: Turn, id: string, signal?: AbortSignal, wait = 8): Promise<Record<string, unknown>> {
+    id = await this.resolveRequest(turn.chat, id);
     return this.exclusive(id, async () => {
       const op = await this.read(id);
       if (!op || op.chat !== turn.chat) throw new Error("request_not_shared");
       op.guard = turn.assertCurrent;
-      if (["install", "inspect", "share"].includes(op.action.kind)) {
+      if (["install", "inspect", "share", "stop"].includes(op.action.kind)) {
         if (!this.plow) throw new Error("owner_setup_unavailable");
         await this.plow.owner(turn, signal);
         if (op.action.kind === "share") await this.plow.share(turn, op.action.group, signal);
@@ -244,7 +267,7 @@ export class Requests {
         if (stage.kind === "pending") op.stage = this.settle(await this.latch.call("plow_get_result", { handle: stage.handle }, signal), op);
         else if (stage.kind === "running") op.stage = this.settle(await this.latch.call("plow_get_output", { handle: stage.handle, since: stage.offset }, signal), op, stage.output);
         else if (stage.kind === "done" && typeof stage.value.request === "string") {
-          await this.command(id, op, ["result", stage.value.request, "--chat", turn.chat, "--wait", "8"], signal);
+          await this.command(id, op, ["result", stage.value.request, "--chat", turn.chat, "--wait", String(wait)], signal);
         }
       } catch { return { request: id, status: "pending", error: "latch_poll_failed" }; }
       await this.save(id, op);

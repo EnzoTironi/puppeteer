@@ -14,6 +14,7 @@ test('the real OpenClaw loader discovers every declared Puppeteer tool and exclu
  t.after(()=>rm(root,{recursive:true,force:true}));
  process.env.OPENCLAW_STATE_DIR=root;
  const cfg=renderConfig({agent:{name:'Puppeteer'},line:{uid:'ln_test'},chats:[]},'http://127.0.0.1:1');
+ assert.deepEqual(cfg.messages.queue,{mode:'followup',cap:256,drop:'new'});
  const context={config:cfg,workspaceDir:root,agentId:'main',sessionKey:'agent:main:main',
   messageChannel:'plow',agentAccountId:'chat',nativeChannelId:'cht_owner',requesterSenderId:'plow-owner',senderIsOwner:true};
  const tools=resolvePluginTools({context,toolAllowlist:cfg.tools.alsoAllow,assertInvocationCurrent(){}});

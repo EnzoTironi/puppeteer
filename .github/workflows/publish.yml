@@ -78,10 +78,14 @@ jobs:
       - name: Test real OpenClaw tool discovery and Plow group ingress
         run: |
           owner="${GITHUB_REPOSITORY_OWNER,,}"
-          docker run --rm --user 0 -v "$PWD/tests/group-ingress.test.mjs:/tmp/group-ingress.test.mjs:ro" -v "$PWD/tests/runtime-tools.test.mjs:/tmp/runtime-tools.test.mjs:ro" --entrypoint /bin/sh "ghcr.io/$owner/puppeteer-openclaw:$GITHUB_SHA" -ec '
+          docker run --rm --user 0 -v "$PWD/tests/group-ingress.test.mjs:/tmp/group-ingress.test.mjs:ro" -v "$PWD/tests/group-load.test.mjs:/tmp/group-load.test.mjs:ro" -v "$PWD/tests/runtime-tools.test.mjs:/tmp/runtime-tools.test.mjs:ro" --entrypoint /bin/sh "ghcr.io/$owner/puppeteer-openclaw:$GITHUB_SHA" -ec '
             ln -s /app /opt/plow/node_modules/openclaw
-            node --test /tmp/runtime-tools.test.mjs /tmp/group-ingress.test.mjs
+            node --test /tmp/runtime-tools.test.mjs /tmp/group-ingress.test.mjs /tmp/group-load.test.mjs
           '
+      - name: Rehearse a 100-person group through the full real gateway
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          docker run --rm --network none -v "$PWD/tests/gateway-stage.mjs:/tmp/gateway-stage.mjs:ro" --entrypoint node "ghcr.io/$owner/puppeteer-openclaw:$GITHUB_SHA" /tmp/gateway-stage.mjs
       - name: Boot offline gateway probe
         run: |
           owner="${GITHUB_REPOSITORY_OWNER,,}"

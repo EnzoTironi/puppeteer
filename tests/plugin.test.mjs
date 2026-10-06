@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, before, after, beforeEach } from 'node:test';
 import { createServer } from 'node:http';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Latch } from '../plugin/latch.ts';
@@ -56,6 +56,23 @@ test('empty and forged aliases never reach Latch', async () => {
  await assert.rejects(requests.ask({...turn,prompt:'/prompt'},'coder'),/prompt_text_required/);
  for (const alias of ['../private','coder; rm -rf','--help','coder\nconfigure']) await assert.rejects(requests.ask(turn,alias),/invalid_agent_alias/);
  assert.equal(wire.length,0);
+});
+test('help, lists and status cannot accidentally become new coding tasks', async()=>{
+ for(const prompt of ['/prompt help','/prompt agents','/prompt List the shared coding agents','/prompt status a1234567','/prompt status a1234567 full','/prompt status']) {
+  await assert.rejects(requests.ask({...turn,prompt},'coder'),/control_request_requires_matching_tool/);
+ }
+ assert.equal(wire.length,0);
+});
+test('short receipt IDs resolve within one conversation and detect collisions',async()=>{
+ responses.push(completed(localReceipt),completed({...localReceipt,status:'replied',reply:'Fixed. Test passed.'}));
+ const receipt=await requests.ask(turn,'coder');
+ assert.equal((await requests.result(turn,receipt.request.slice(0,8))).reply,'Fixed. Test passed.');
+ await assert.rejects(requests.result({...turn,chat:'cht_other'},receipt.request.slice(0,8)),/request_not_shared/);
+ const op=await readFile(join(directory,receipt.request+'.json'),'utf8');
+ const other=receipt.request.slice(0,8)+'f'.repeat(24);
+ await writeFile(join(directory,other+'.json'),op);
+ await assert.rejects(requests.result(turn,receipt.request.slice(0,8)),/ambiguous_request_id/);
+ assert.equal(wire.length,2);
 });
 test('concurrent duplicate asks and reconnects send once', async () => {
  responses.push({status:'pending',reason:'awaiting_approval',handle:'private-approval'});

@@ -157,7 +157,7 @@ class BridgeTest(unittest.TestCase):
 
     def test_discovery_exposes_only_native_session_identity(self):
         value = self.bridge.discover()
-        self.assertEqual(value["local_agents"][0], {"target": "sam/main:coder", "backend": "codex", "status": "unknown"})
+        self.assertEqual(value["local_agents"][0], {"target": "sam/main:coder", "backend": "codex", "status": "unknown", "role": "agent"})
         self.assertNotIn("private-project", json.dumps(value))
         self.assertNotIn("secret", json.dumps(value))
 
@@ -302,12 +302,12 @@ class BridgeTest(unittest.TestCase):
     def test_reply_key_is_bound_to_its_request_and_expires(self):
         first = self.ask()
         first_key = self.reply_key()
+        self.bridge.reply(first["request"], "first reply", first_key)
         self.messages[0]["uid"] = "msg_second"
         second = self.bridge.ask("cht_shared", "msg_second", "coder")
         second_key = self.reply_key()
         with self.assertRaisesRegex(BridgeError, "invalid_reply_key"):
             self.bridge.reply(second["request"], "wrong request", first_key)
-        self.bridge.reply(first["request"], "first reply", first_key)
         self.bridge.clock = lambda: __import__("time").time() + 901
         with self.assertRaisesRegex(BridgeError, "not_awaiting_reply"):
             self.bridge.reply(second["request"], "late reply", second_key)
@@ -318,6 +318,52 @@ class BridgeTest(unittest.TestCase):
         result = self.bridge.result("cht_shared", receipt["request"])
         self.assertEqual(result["status"], "timed_out")
         self.assertNotIn("reply", result)
+
+    def test_100_participants_reserve_one_session_atomically(self):
+        self.pair_signed()
+        sources = [{**self.messages[0], "uid": "msg_guest_" + str(i),
+                    "sender": {"type": "member", "uid": "guest_" + str(i)},
+                    "body": "/prompt Explain the entry point for attendee " + str(i)} for i in range(100)]
+        def ask(source):
+            proof, signature = self.signed_source(source)
+            return self.bridge.ask("cht_shared", source["uid"], "coder", proof, signature)
+        with ThreadPoolExecutor(max_workers=24) as executor:
+            results = list(executor.map(ask, sources))
+        accepted = [row for row in results if row["status"] == "submitted"]
+        busy = [row for row in results if row["status"] == "busy"]
+        self.assertEqual(len(accepted), 1)
+        self.assertEqual(len(busy), 99)
+        self.assertEqual(self.dispatch.call_count, 1)
+        self.assertTrue(all(row == {"agent": "coder", "status": "busy"} for row in busy))
+        self.bridge.reply(accepted[0]["request"], "The entry point is cli.main.", self.reply_key())
+        next_source = {**sources[0], "uid": "msg_after_completion"}
+        self.assertEqual(ask(next_source)["status"], "submitted")
+        self.assertEqual(self.dispatch.call_count, 2)
+
+    def test_busy_reservation_spans_chats_without_disclosing_the_other_receipt(self):
+        self.pair_signed()
+        config = self.bridge.config()
+        config["chats"].append("cht_other")
+        self.bridge.config_path.write_text(json.dumps(config))
+        first_proof, signature = self.signed_source()
+        first = self.bridge.ask("cht_shared", "msg_original", "coder", first_proof, signature)
+        source = {**self.messages[0], "uid": "msg_other", "chat_uid": "cht_other"}
+        proof, signature = self.signed_source(source)
+        second = self.bridge.ask("cht_other", source["uid"], "coder", proof, signature)
+        self.assertEqual(second, {"agent": "coder", "status": "busy"})
+        self.assertNotIn(first["request"], json.dumps(second))
+        self.assertEqual(self.dispatch.call_count, 1)
+
+    def test_expired_or_uncertain_work_keeps_the_session_reserved(self):
+        self.pair_signed()
+        proof, signature = self.signed_source()
+        first = self.bridge.ask("cht_shared", "msg_original", "coder", proof, signature)
+        self.bridge.clock = lambda: __import__("time").time() + 901
+        self.assertEqual(self.bridge.result("cht_shared", first["request"])["status"], "timed_out")
+        source = {**self.messages[0], "uid": "msg_later", "created_at": datetime.datetime.fromtimestamp(self.bridge.clock(), datetime.timezone.utc).isoformat()}
+        proof, signature = self.signed_source(source)
+        self.assertEqual(self.bridge.ask("cht_shared", source["uid"], "coder", proof, signature)["status"], "busy")
+        self.assertEqual(self.dispatch.call_count, 1)
 
     def test_configuration_refuses_remote_agents_and_agent_initiated_grants(self):
         with self.assertRaisesRegex(BridgeError, "only_local"):

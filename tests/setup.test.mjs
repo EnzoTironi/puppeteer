@@ -149,3 +149,18 @@ test('the SDK setup tool requires the actual live owner DM and rejects command/p
  }
  endPuppeteerTurn('run-owner'); assert.equal(wire.length,0);
 });
+
+
+test('parallel pairing keeps owner-selected Boss, project and worker limit, and stop is owner-only',async()=>{
+ responses.push(completed({pairing_prepared:true}),{bytes:1},completed({configured:true,chats:['cht_owner','cht_group']}));
+ const result=await requests.setup(owner,{action:'share',target:'mac/main:Boss',project:'mac/demo:coder',workers:4,group:'cht_group'});
+ assert.equal(result.configured,true);
+ const write=wire.find(row=>row.name==='plow_write_file');assert.ok(write);
+ assert.deepEqual(JSON.parse(write.arguments.content).parallel,{project:'mac/demo:coder',workers:4});
+ responses.push(completed({paused:true,cancelled:3,uncertain:0}));
+ sources.push({uid:'msg_stop',chat_uid:owner.chat,direction:'inbound',body:'Stop the demo',sender:{type:'member',uid:'mem_owner'},created_at:new Date().toISOString()});
+ const stopped=await requests.setup({...owner,message:'msg_stop',prompt:'Stop the demo'},{action:'stop'});
+ assert.equal(stopped.paused,true);assert.equal(stopped.cancelled,3);
+ assert.deepEqual(wire.at(-1).arguments.argv,['puppeteer-bridge','stop']);
+ await assert.rejects(requests.setup(guest,{action:'stop'}),/owner_main_dm_required/);
+});
