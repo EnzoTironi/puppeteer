@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Latch, object } from "./latch.ts";
 import { Plow } from "./plow.ts";
 
-export type Turn = { chat: string; message: string; session: string; prompt: string; owner?: boolean };
+export type Turn = { chat: string; message: string; session: string; prompt: string; owner?: boolean; assertCurrent?: () => void };
 export type Setup = { action: "install" | "inspect" | "groups" } | { action: "share"; target: string; group?: string };
 type Action = { kind: "agents" } | { kind: "ask"; alias: string } | { kind: "install" } | { kind: "inspect" }
   | { kind: "share"; target: string; chats: string[]; group?: string; phase: "prepare" | "write" | "pair" };
@@ -13,7 +13,7 @@ type Stage =
   | { kind: "pending"; handle: string; reason: string }
   | { kind: "running"; handle: string; output: string; offset: number }
   | { kind: "done"; value: Record<string, unknown> };
-type Operation = { chat: string; message: string; created: number; action: Action; stage: Stage };
+type Operation = { chat: string; message: string; created: number; action: Action; stage: Stage; guard?: () => void };
 
 function parseOperation(value: unknown): Operation {
   if (!object(value) || typeof value.chat !== "string" || typeof value.message !== "string" || typeof value.created !== "number" || !object(value.action) || !object(value.stage)) throw new Error("invalid_request_state");
@@ -131,8 +131,10 @@ export class Requests {
   }
 
   private async send(id: string, op: Operation, name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<void> {
+    op.guard?.();
     op.stage = { kind: "unknown", error: "latch_delivery_unknown" };
     await this.save(id, op);
+    op.guard?.();
     try {
       op.stage = this.settle(await this.latch.call(name, args, signal), op);
     } catch (error) {
@@ -181,7 +183,7 @@ export class Requests {
       }
       const action: Action = input.action === "share" ? { kind: "share", target: input.target, group: input.group, chats, phase: "prepare" }
         : input.action === "install" ? { kind: "install" } : { kind: "inspect" };
-      const op: Operation = { chat: turn.chat, message: turn.message, created: Date.now(), action, stage: { kind: "unknown", error: "not_started" } };
+      const op: Operation = { chat: turn.chat, message: turn.message, created: Date.now(), action, stage: { kind: "unknown", error: "not_started" }, guard: turn.assertCurrent };
       if (input.action === "install") {
         const commit = process.env.PUPPETEER_BRIDGE_COMMIT;
         if (!commit || !/^[a-f0-9]{40}$/.test(commit)) throw new Error("connector_release_not_pinned");
@@ -198,7 +200,7 @@ export class Requests {
 
   async agents(turn: Turn, signal?: AbortSignal): Promise<Record<string, unknown>> {
     const id = randomUUID().replaceAll("-", "");
-    const op: Operation = { chat: turn.chat, message: turn.message, created: Date.now(), action: { kind: "agents" }, stage: { kind: "unknown", error: "not_started" } };
+    const op: Operation = { chat: turn.chat, message: turn.message, created: Date.now(), action: { kind: "agents" }, stage: { kind: "unknown", error: "not_started" }, guard: turn.assertCurrent };
     await this.command(id, op, ["agents", "--chat", turn.chat], signal);
     return this.view(id, op);
   }
@@ -210,13 +212,14 @@ export class Requests {
     return this.exclusive(id, async () => {
       const previous = await this.read(id);
       if (previous) {
+        previous.guard = turn.assertCurrent;
         if (previous.action.kind !== "ask" || previous.action.alias !== alias) throw new Error("source_message_already_routed_to_another_agent");
         if (previous.stage.kind === "done" && typeof previous.stage.value.request === "string") {
           await this.command(id, previous, ["result", previous.stage.value.request, "--chat", turn.chat, "--wait", "15"], signal);
         }
         return this.view(id, previous);
       }
-      const op: Operation = { chat: turn.chat, message: turn.message, created: Date.now(), action: { kind: "ask", alias }, stage: { kind: "unknown", error: "not_started" } };
+      const op: Operation = { chat: turn.chat, message: turn.message, created: Date.now(), action: { kind: "ask", alias }, stage: { kind: "unknown", error: "not_started" }, guard: turn.assertCurrent };
       const proof = this.plow ? await this.plow.proof(turn, this.directory, signal) : [];
       await this.command(id, op, ["ask", "--chat", turn.chat, "--message", turn.message, "--agent", alias, ...proof], signal);
       return this.view(id, op);
@@ -228,6 +231,7 @@ export class Requests {
     return this.exclusive(id, async () => {
       const op = await this.read(id);
       if (!op || op.chat !== turn.chat) throw new Error("request_not_shared");
+      op.guard = turn.assertCurrent;
       if (["install", "inspect", "share"].includes(op.action.kind)) {
         if (!this.plow) throw new Error("owner_setup_unavailable");
         await this.plow.owner(turn, signal);
@@ -235,6 +239,7 @@ export class Requests {
       }
       if (Date.now() - op.created > 900_000) return { request: id, status: "timed_out" };
       const stage = op.stage;
+      op.guard?.();
       try {
         if (stage.kind === "pending") op.stage = this.settle(await this.latch.call("plow_get_result", { handle: stage.handle }, signal), op);
         else if (stage.kind === "running") op.stage = this.settle(await this.latch.call("plow_get_output", { handle: stage.handle, since: stage.offset }, signal), op, stage.output);

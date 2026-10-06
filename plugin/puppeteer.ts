@@ -46,7 +46,10 @@ function currentTurn(context: OpenClawPluginToolContext<2>, id: string, allowOwn
     || (!isPrompt(bound.turn.prompt) && !(allowOwner && ownerMain(context, bound.turn)))) {
     throw new Error("verified_prompt_turn_required");
   }
-  return bound.turn;
+  return { ...bound.turn, assertCurrent() {
+    context.assertInvocationCurrent();
+    if (turns.get(bound.run) !== bound.turn) throw new Error("verified_prompt_turn_required");
+  } };
 }
 
 function setupParams(value: unknown): Setup {

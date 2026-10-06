@@ -56,6 +56,11 @@ test('owner installation is fixed, pinned and resumes the original approval',asy
  assert.equal((await requests.result(owner,receipt.request)).installed,true);
  assert.deepEqual(wire.map(r=>r.name),['plow_run_command','plow_get_result']);
 });
+test('a turn that expires during source verification cannot start a Mac operation',async()=>{
+ await assert.rejects(requests.setup({...owner,assertCurrent(){throw new Error('turn_expired');}},{action:'install'}),/turn_expired/);
+ await assert.rejects(requests.ask({...guest,assertCurrent(){throw new Error('turn_expired');}},'coder'),/turn_expired/);
+ assert.equal(wire.length,0);
+});
 test('owner pairing uses private staging, replaces explicit grants and keeps its key out of results and ledgers',async()=>{
  responses.push(completed({pairing_prepared:true}),{bytes:200},completed({configured:true,chats:['cht_owner','cht_group']}));
  const result=await requests.setup(owner,{action:'share',target:'sam/demo:coder',group:'cht_group'});
