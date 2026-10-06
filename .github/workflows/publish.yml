@@ -1,0 +1,75 @@
+name: Test and publish Puppeteer
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      push_image:
+        description: Push the tested image to GHCR
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  bridge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test connector without installing MyPlow
+        run: python3 -m unittest discover -s tests -v
+      - name: Verify standalone package
+        run: |
+          python3 -m pip install .
+          puppeteer-bridge --help
+          python3 -m puppeteer_bridge.bridge --help
+  image:
+    needs: bridge
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        if: inputs.push_image
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Fetch pinned Plow CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/plow-pbc/plow-agents/53dd92242e88f6e877cc09dbfb08b31b0e3925cb/bin/plow-agents -o "$RUNNER_TEMP/plow-agents"
+          chmod +x "$RUNNER_TEMP/plow-agents"
+      - name: Build OpenClaw image
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          "$RUNNER_TEMP/plow-agents" image build "ghcr.io/$owner/puppeteer-openclaw:$GITHUB_SHA"
+      - name: Verify persona, skill and maintained reporter
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          docker run --rm --entrypoint /bin/sh "ghcr.io/$owner/puppeteer-openclaw:$GITHUB_SHA" -ec '
+            test "$AGENT_ID" = puppeteer
+            test "$AGENT_RUNTIME" = OpenClaw
+            test -s /opt/plow/prompt/AGENTS.md
+            test -s /opt/plow/skills/puppeteer/SKILL.md
+            test -s /usr/share/licenses/puppeteer/LICENSE
+            test -r /opt/plow/agent-index-client.py
+            test -s /opt/plow/boot/agent-index.js
+            test -x /opt/plow/probe
+            python3 /opt/plow/agent-index-client.py --help >/dev/null
+            agentsview --version
+          '
+      - name: Boot offline gateway probe
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          docker run --rm --entrypoint /opt/plow/probe "ghcr.io/$owner/puppeteer-openclaw:$GITHUB_SHA"
+      - name: Push public image candidate
+        if: inputs.push_image
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          docker tag "ghcr.io/$owner/puppeteer-openclaw:$GITHUB_SHA" "ghcr.io/$owner/puppeteer-openclaw:latest"
+          "$RUNNER_TEMP/plow-agents" image push "ghcr.io/$owner/puppeteer-openclaw:$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+          "$RUNNER_TEMP/plow-agents" image push "ghcr.io/$owner/puppeteer-openclaw:latest" | tee -a "$GITHUB_STEP_SUMMARY"
