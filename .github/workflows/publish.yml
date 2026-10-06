@@ -1,6 +1,8 @@
 name: Test and publish Puppeteer
 
 on:
+  push:
+    branches: [feat/openclaw-agent]
   pull_request:
   workflow_dispatch:
     inputs:

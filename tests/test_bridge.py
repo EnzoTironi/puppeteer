@@ -10,6 +10,8 @@ import subprocess
 import tempfile
 import threading
 import unittest
+import urllib.parse
+import urllib.error
 from unittest.mock import patch
 
 from puppeteer_bridge.bridge import Bridge, BridgeError
@@ -25,10 +27,16 @@ class BridgeTest(unittest.TestCase):
                 if self.headers.get("Authorization") != "Bearer test-token":
                     self.send_error(401)
                     return
-                if self.path != "/v1/chats/cht_shared/messages":
+                route = urllib.parse.urlsplit(self.path)
+                if route.path != "/v1/chats/cht_shared/messages":
                     self.send_error(404)
                     return
-                body = json.dumps({"messages": cls.messages}).encode()
+                if cls.http_status != 200:
+                    self.send_error(cls.http_status)
+                    return
+                page = urllib.parse.parse_qs(route.query).get("starting_after", [None])[0]
+                value = cls.pages.get(page, {"data": cls.messages, "has_more": False}) if cls.pages else cls.payload
+                body = value if isinstance(value, bytes) else json.dumps(value if value is not None else {"data": cls.messages, "has_more": False}).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
@@ -49,6 +57,9 @@ class BridgeTest(unittest.TestCase):
         cls.thread.join()
 
     def setUp(self):
+        type(self).http_status = 200
+        type(self).payload = None
+        type(self).pages = {}
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)

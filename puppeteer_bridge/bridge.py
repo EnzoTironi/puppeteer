@@ -86,6 +86,10 @@ class Bridge:
             config = json.loads(self.config_path.read_text())
             if not isinstance(config.get("agents"), dict) or not isinstance(config.get("chats"), list):
                 raise ValueError()
+            if not isinstance(config.get("token_file"), str) or not isinstance(config.get("api_base"), str):
+                raise ValueError()
+            if any(not isinstance(target, str) for target in config["agents"].values()):
+                raise ValueError()
             return config
         except (OSError, ValueError, AttributeError):
             raise BridgeError("not_configured: run puppeteer-bridge configure on the Mac")
@@ -141,6 +145,8 @@ class Bridge:
         config = self.authorize(chat)
         try:
             roster = json.loads((self.install / "run" / "roster.json").read_text())
+            if not isinstance(roster, dict):
+                raise ValueError()
         except (OSError, ValueError):
             raise BridgeError("local_team_unavailable")
         rows = []
@@ -150,7 +156,8 @@ class Bridge:
                 continue
             session, tab = target.split("/", 1)[1].split(":", 1)
             try:
-                status = json.loads((self.install / "status" / ("mc-" + session) / (tab + ".json")).read_text()).get("status", "unknown")
+                value = json.loads((self.install / "status" / ("mc-" + session) / (tab + ".json")).read_text())
+                status = value.get("status", "unknown") if isinstance(value, dict) else "unknown"
             except (OSError, ValueError):
                 status = "unknown"
             rows.append({"alias": alias, "backend": record.get("backend", "claude"), "status": status})
@@ -164,21 +171,31 @@ class Bridge:
             raise BridgeError("plow_login_unavailable_on_mac")
         if not token:
             raise BridgeError("plow_login_unavailable_on_mac")
-        request = urllib.request.Request(config["api_base"] + "/v1/chats/" + chat + "/messages",
-                                         headers={"Authorization": "Bearer " + token})
-        try:
-            with urllib.request.urlopen(request, timeout=15) as response:
-                payload = json.load(response)
-        except (urllib.error.URLError, ValueError):
-            raise BridgeError("cannot_verify_plow_message")
-        rows = payload if isinstance(payload, list) else payload.get("messages", payload.get("data", [])) if isinstance(payload, dict) else []
-        if not isinstance(rows, list):
-            raise BridgeError("cannot_verify_plow_message")
-        source = next((r for r in rows if isinstance(r, dict) and r.get("uid") == message), None)
+        cursor = None
+        source = None
+        for _ in range(5):
+            query = urllib.parse.urlencode({"limit": 50, **({"starting_after": cursor} if cursor else {})})
+            request = urllib.request.Request(config["api_base"] + "/v1/chats/" + chat + "/messages?" + query,
+                                             headers={"Authorization": "Bearer " + token})
+            try:
+                with urllib.request.urlopen(request, timeout=15) as response:
+                    payload = json.load(response)
+            except (urllib.error.URLError, TimeoutError, ValueError):
+                raise BridgeError("cannot_verify_plow_message")
+            rows = payload if isinstance(payload, list) else payload.get("messages", payload.get("data", [])) if isinstance(payload, dict) else None
+            if not isinstance(rows, list):
+                raise BridgeError("cannot_verify_plow_message")
+            source = next((r for r in rows if isinstance(r, dict) and r.get("uid") == message), None)
+            if source or not isinstance(payload, dict) or not payload.get("has_more") or not rows:
+                break
+            next_cursor = rows[-1].get("uid") if isinstance(rows[-1], dict) else None
+            if not next_cursor or next_cursor == cursor:
+                raise BridgeError("cannot_verify_plow_message")
+            cursor = identifier(next_cursor)
         if not source or source.get("direction") != "inbound" or source.get("chat_uid") != chat:
             raise BridgeError("inbound_message_not_found_in_shared_chat")
         sender = source.get("sender")
-        if not isinstance(sender, dict) or sender.get("type") == "agent":
+        if not isinstance(sender, dict) or sender.get("type") != "member":
             raise BridgeError("agent_messages_cannot_start_requests")
         body = source.get("body")
         if not isinstance(body, str) or not body.strip() or len(body) > 8000:
