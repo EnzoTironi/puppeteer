@@ -68,7 +68,7 @@ export class Requests {
   private readonly paths: { read: string[]; write: string[] };
   private readonly plow: Plow | undefined;
   constructor(latch: Latch, directory = "/var/lib/plow/puppeteer", paths = {
-    read: ["~/.config/puppeteer", "~/.config/mypeople", "~/.config/plow/token", "~/.local/share/mypeople", "~/.local/share/uv/tools/puppeteer-bridge"],
+    read: ["~/.config/puppeteer", "~/.config/mypeople", "~/.local/share/mypeople", "~/.local/share/uv/tools/puppeteer-bridge"],
     write: ["~/.local/share/mypeople"],
   }, plow?: Plow) {
     this.latch = latch;

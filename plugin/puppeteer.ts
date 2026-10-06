@@ -72,7 +72,7 @@ function macPaths(): { read: string[]; write: string[] } {
     return value;
   };
   return {
-    read: parse("PUPPETEER_MAC_READ_PATHS", ["~/.config/puppeteer", "~/.config/mypeople", "~/.config/plow/token", "~/.local/share/mypeople", "~/.local/share/uv/tools/puppeteer-bridge"]),
+    read: parse("PUPPETEER_MAC_READ_PATHS", ["~/.config/puppeteer", "~/.config/mypeople", "~/.local/share/mypeople", "~/.local/share/uv/tools/puppeteer-bridge"]),
     write: parse("PUPPETEER_MAC_WRITE_PATHS", ["~/.local/share/mypeople"]),
   };
 }

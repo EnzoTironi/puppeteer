@@ -122,6 +122,7 @@ test('signed dispatch uses original Plow text and never forwards cloud credentia
  const key=await readFile(join(directory,'source.key'),'utf8');
  assert.equal(signature,createHmac('sha256',Buffer.from(key,'hex')).update(proof).digest('hex'));
  assert.ok(!JSON.stringify(wire).includes(key)); assert.ok(!JSON.stringify(wire).includes('cloud-only-token'));
+ assert.ok(!wire[0].arguments.read_paths.includes('~/.config/plow/token'));
  assert.ok(!JSON.stringify(result).includes(proof));
 });
 test('a model cannot replace verified source text, author, direction, age or conversation',async()=>{
