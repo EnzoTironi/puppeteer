@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "puppeteer-bridge"
+version = "0.1.0"
+description = "Connect approved Plow conversations to existing local MyPlow coding agents"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = []
+
+[project.scripts]
+puppeteer-bridge = "puppeteer_bridge.bridge:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["puppeteer_bridge"]

@@ -1,0 +1,2 @@
+class BridgeError(Exception):
+    pass

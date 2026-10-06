@@ -1,0 +1,13 @@
+{
+  "name": "puppeteer-openclaw-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-strip-types --test tests/plugin.test.mjs tests/setup.test.mjs tests/replies.test.mjs tests/groups.test.mjs",
+    "typecheck": "node scripts/typecheck.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.2",
+    "typescript": "6.0.3"
+  }
+}

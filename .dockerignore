@@ -1,0 +1,12 @@
+.git
+.github
+plow-credentials
+.venv
+**/__pycache__
+dist
+*.egg-info
+tests
+puppeteer_bridge
+README.md
+
+node_modules/
