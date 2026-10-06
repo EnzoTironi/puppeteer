@@ -31,9 +31,9 @@ def myplow_config_path():
     return Path.home() / ".config/mypeople/queue.env"
 
 
-def load_myplow_config():
+def load_myplow_config(path=None):
     try:
-        lines = myplow_config_path().read_text().splitlines()
+        lines = (path or myplow_config_path()).read_text().splitlines()
     except FileNotFoundError:
         return {}
     cfg = {}
@@ -74,11 +74,12 @@ def identifier(value):
 
 
 class Bridge:
-    def __init__(self, cfg, config_path, clock=time.time):
+    def __init__(self, cfg, config_path, clock=time.time, local_config=None):
         self.cfg = cfg
         self.config_path = Path(config_path)
         self.install = Path(cfg["INSTALL_DIR"])
         self.clock = clock
+        self.local_config = local_config or myplow_config_path()
         self.state = self.install / "state" / "agent-bridge"
 
     def config(self):
@@ -119,7 +120,8 @@ class Bridge:
                 raise BridgeError("duplicate_agent_alias")
             mapped[alias] = target
         private_json(self.config_path, {"agents": mapped, "chats": sorted({identifier(c) for c in chats}),
-                     "token_file": str(Path(token_file).expanduser().resolve()), "api_base": api_base.rstrip("/")})
+                     "token_file": str(Path(token_file).expanduser().resolve()), "api_base": api_base.rstrip("/"),
+                     "myplow_config": str(self.local_config)})
         return {"configured": True, "agents": sorted(mapped), "chats": sorted(set(chats))}
 
     @contextmanager
@@ -246,7 +248,7 @@ class Bridge:
                 if row["alias"] != alias:
                     raise BridgeError("source_message_already_routed_to_another_agent")
                 return self.receipt(row)
-        callback = shlex.join(["env", "MYPEOPLE_CONFIG_PATH=" + str(myplow_config_path()),
+        callback = shlex.join(["env", "MYPEOPLE_CONFIG_PATH=" + str(self.local_config),
                               "PUPPETEER_CONFIG=" + str(self.config_path),
                               sys.executable, "-m", "puppeteer_bridge.bridge", "reply", request_id,
                               "--key", reply_key])
@@ -331,13 +333,20 @@ def main(argv=None, cfg=None):
     reply.add_argument("--key", required=True, help="Private per-request key delivered to the target session")
     reply.add_argument("--text", help="Reply text; otherwise read stdin")
     args = parser.parse_args(argv)
-    settings = cfg if cfg is not None else load_myplow_config()
-    if not settings.get("INSTALL_DIR") or not settings.get("HOST_ID"):
-        print(json.dumps({"error": "local_team_not_configured: run mypeople up first"}))
-        return 1
     config_path = os.environ.get("PUPPETEER_CONFIG", str(Path.home() / ".config/puppeteer/bridge.json"))
-    bridge = Bridge(settings, config_path)
     try:
+        local_config = myplow_config_path()
+        if args.command != "configure" and not os.environ.get("MYPEOPLE_CONFIG_PATH") and not os.environ.get("MYPEOPLE_HOME"):
+            try:
+                stored = json.loads(Path(config_path).read_text()).get("myplow_config")
+                if isinstance(stored, str):
+                    local_config = Path(stored)
+            except (OSError, ValueError, AttributeError):
+                pass
+        settings = cfg if cfg is not None else load_myplow_config(local_config)
+        if not settings.get("INSTALL_DIR") or not settings.get("HOST_ID"):
+            raise BridgeError("local_team_not_configured: run mypeople up first")
+        bridge = Bridge(settings, config_path, local_config=local_config)
         if args.command == "configure":
             value = bridge.configure(args.agent, args.chat, args.token_file, args.api_base)
         elif args.command == "agents":

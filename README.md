@@ -71,6 +71,8 @@ The CLI uses MyPlow's `MYPEOPLE_CONFIG_PATH` / `MYPEOPLE_HOME` configuration.
 `PUPPETEER_CONFIG` overrides the bridge configuration path.
 `--token-file` overrides the local Plow account-token path. Custom homes
 need matching read/write paths in Latch's approved command capabilities.
+The owner-selected MyPlow configuration path is saved when running `configure`,
+so later Latch commands and reply callbacks use that same local team.
 
 ## Run the cloud agent locally
 
