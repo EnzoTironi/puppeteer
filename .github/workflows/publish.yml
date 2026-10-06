@@ -75,12 +75,12 @@ jobs:
             python3 /opt/plow/agent-index-client.py --help >/dev/null
             agentsview --version
           '
-      - name: Test actual Plow group ingress and source binding
+      - name: Test real OpenClaw tool discovery and Plow group ingress
         run: |
           owner="${GITHUB_REPOSITORY_OWNER,,}"
-          docker run --rm --user 0 -v "$PWD/tests/group-ingress.test.mjs:/tmp/group-ingress.test.mjs:ro" --entrypoint /bin/sh "ghcr.io/$owner/puppeteer-openclaw:$GITHUB_SHA" -ec '
+          docker run --rm --user 0 -v "$PWD/tests/group-ingress.test.mjs:/tmp/group-ingress.test.mjs:ro" -v "$PWD/tests/runtime-tools.test.mjs:/tmp/runtime-tools.test.mjs:ro" --entrypoint /bin/sh "ghcr.io/$owner/puppeteer-openclaw:$GITHUB_SHA" -ec '
             ln -s /app /opt/plow/node_modules/openclaw
-            node --test /tmp/group-ingress.test.mjs
+            node --test /tmp/runtime-tools.test.mjs /tmp/group-ingress.test.mjs
           '
       - name: Boot offline gateway probe
         run: |

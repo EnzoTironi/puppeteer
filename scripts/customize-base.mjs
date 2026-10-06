@@ -9,6 +9,12 @@ async function replace(file, before, after) {
   await writeFile(file, source.replace(before, after));
 }
 const plugin = join(root, "plugin/dist");
+const manifestPath = join(root, "plugin/openclaw.plugin.json");
+const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+const baseTools = ["plow_start_thread", "plow_set_thread_trust", "plow_reply_to", "plow_send_email"];
+if (manifest.id !== "plow" || JSON.stringify(manifest.contracts?.tools) !== JSON.stringify(baseTools)) throw new Error("Pinned Plow tool manifest changed");
+manifest.contracts.tools.push("puppeteer_agents", "puppeteer_ask", "puppeteer_result", "puppeteer_setup");
+await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
 for (const name of ["latch", "plow", "requests", "puppeteer"]) {
   const source = await readFile(join(root, "puppeteer-src", name + ".ts"), "utf8");
   await writeFile(join(plugin, name + ".js"), stripTypeScriptTypes(source.replace(/from "(\.\/[^"\n]+)\.ts"/g, 'from "$1.js"')));

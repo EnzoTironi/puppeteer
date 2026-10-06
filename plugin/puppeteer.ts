@@ -118,7 +118,7 @@ export function registerPuppeteer(api: OpenClawPluginApi): void {
           return { isError: true, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
         }
       },
-    }) });
+    }) }, { name: tool.name });
   }
   api.registerTool({ contextVersion: 2, create: context => ({
     name: "puppeteer_setup", label: "Set up Puppeteer on the owner's Mac",
@@ -140,5 +140,5 @@ export function registerPuppeteer(api: OpenClawPluginApi): void {
         return { isError: true, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
       }
     },
-  }) });
+  }) }, { name: "puppeteer_setup" });
 }
