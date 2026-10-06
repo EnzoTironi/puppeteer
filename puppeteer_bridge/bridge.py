@@ -1,6 +1,7 @@
 """A Plow/Latch entry point into an explicitly shared local MyPlow team."""
 
 import argparse
+import base64
 from contextlib import contextmanager
 import datetime
 import hashlib
@@ -12,6 +13,7 @@ import re
 import secrets
 import shlex
 import sqlite3
+import stat
 import subprocess
 import sys
 import time
@@ -87,7 +89,8 @@ class Bridge:
             config = json.loads(self.config_path.read_text())
             if not isinstance(config.get("agents"), dict) or not isinstance(config.get("chats"), list):
                 raise ValueError()
-            if not isinstance(config.get("token_file"), str) or not isinstance(config.get("api_base"), str):
+            signed = isinstance(config.get("source_key"), str) and re.fullmatch(r"[a-f0-9]{64}", config["source_key"])
+            if ("source_key" in config and not signed) or (not signed and (not isinstance(config.get("token_file"), str) or not isinstance(config.get("api_base"), str))):
                 raise ValueError()
             if any(not isinstance(target, str) for target in config["agents"].values()):
                 raise ValueError()
@@ -123,6 +126,83 @@ class Bridge:
                      "token_file": str(Path(token_file).expanduser().resolve()), "api_base": api_base.rstrip("/"),
                      "myplow_config": str(self.local_config)})
         return {"configured": True, "agents": sorted(mapped), "chats": sorted(set(chats))}
+
+    def discover(self):
+        """Owner onboarding: expose native IDs, never paths or transcripts."""
+        try:
+            roster = json.loads((self.install / "run/roster.json").read_text())
+            if not isinstance(roster, dict):
+                raise ValueError()
+        except (OSError, ValueError):
+            raise BridgeError("local_team_unavailable")
+        rows = []
+        for target, record in roster.items():
+            if not isinstance(record, dict) or not re.fullmatch(re.escape(self.cfg["HOST_ID"]) + r"/[A-Za-z0-9_-]+:[A-Za-z0-9_-]+", target):
+                continue
+            session, tab = target.split("/", 1)[1].split(":", 1)
+            try:
+                status = json.loads((self.install / "status" / ("mc-" + session) / (tab + ".json")).read_text()).get("status", "unknown")
+            except (OSError, ValueError, AttributeError):
+                status = "unknown"
+            rows.append({"target": target, "backend": record.get("backend", "claude"), "status": status})
+        return {"local_agents": rows}
+
+    def pairing_path(self, request):
+        if not re.fullmatch(r"[a-f0-9]{32}", request):
+            raise BridgeError("invalid_pairing_request")
+        return self.config_path.parent / "pairing" / (request + ".json")
+
+    def prepare(self, request):
+        if os.environ.get("AGENT_ID"):
+            raise BridgeError("owner_onboarding_required")
+        path = self.pairing_path(request)
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if path.parent.is_symlink():
+            raise BridgeError("unsafe_pairing_directory")
+        path.parent.chmod(0o700)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise BridgeError("unsafe_pairing_file")
+            os.fchmod(fd, 0o600)
+        finally:
+            os.close(fd)
+        return {"pairing_prepared": True}
+
+    def pair(self, request):
+        """Consume the fixed private pairing file written by the owner-only tool."""
+        if os.environ.get("AGENT_ID"):
+            raise BridgeError("owner_onboarding_required")
+        path = self.pairing_path(request)
+        if not path.exists():
+            try:
+                if self.config().get("pair_request") == request:
+                    return {"configured": True, "agents": ["coder"], "chats": self.config()["chats"]}
+            except BridgeError:
+                pass
+            raise BridgeError("pairing_file_unavailable")
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd) as stream:
+            if os.fstat(stream.fileno()).st_mode & 0o077:
+                raise BridgeError("pairing_file_must_be_private")
+            try:
+                value = json.load(stream)
+            except ValueError:
+                raise BridgeError("invalid_pairing_file")
+        if not isinstance(value, dict) or set(value) != {"target", "chats", "source_key"}:
+            raise BridgeError("invalid_pairing_file")
+        target, chats, key = value["target"], value["chats"], value["source_key"]
+        if not isinstance(key, str) or not re.fullmatch(r"[a-f0-9]{64}", key):
+            raise BridgeError("invalid_source_key")
+        if not isinstance(chats, list) or not 1 <= len(chats) <= 2:
+            raise BridgeError("invalid_pairing_chats")
+        chats = sorted({identifier(chat) for chat in chats})
+        if not isinstance(target, str) or target not in {row["target"] for row in self.discover()["local_agents"]}:
+            raise BridgeError("local_agent_unavailable")
+        private_json(self.config_path, {"agents": {"coder": target}, "chats": chats, "source_key": key,
+                                       "myplow_config": str(self.local_config), "pair_request": request})
+        path.unlink()
+        return {"configured": True, "agents": ["coder"], "chats": chats}
 
     @contextmanager
     def ledger(self):
@@ -165,8 +245,21 @@ class Bridge:
             rows.append({"alias": alias, "backend": record.get("backend", "claude"), "status": status})
         return {"agents": rows}
 
-    def source_message(self, config, chat, message):
+    def source_message(self, config, chat, message, proof=None, signature=None):
         identifier(message)
+        if "source_key" in config:
+            if not isinstance(proof, str) or len(proof) > 48000 or not re.fullmatch(r"[A-Za-z0-9_-]+", proof):
+                raise BridgeError("signed_source_required")
+            if not isinstance(signature, str) or not hmac.compare_digest(
+                    hmac.new(bytes.fromhex(config["source_key"]), proof.encode(), hashlib.sha256).hexdigest(), signature):
+                raise BridgeError("invalid_source_signature")
+            try:
+                source = json.loads(base64.urlsafe_b64decode(proof + "=" * (-len(proof) % 4)))
+            except (ValueError, UnicodeError):
+                raise BridgeError("invalid_signed_source")
+            return self.validate_source(source, chat, message)
+        if proof is not None or signature is not None:
+            raise BridgeError("signed_source_not_paired")
         try:
             token = Path(config["token_file"]).read_text().strip()
         except OSError:
@@ -197,7 +290,10 @@ class Bridge:
             if not next_cursor or next_cursor == cursor:
                 raise BridgeError("cannot_verify_plow_message")
             cursor = identifier(next_cursor)
-        if not source or source.get("direction") != "inbound" or source.get("chat_uid") != chat:
+        return self.validate_source(source, chat, message)
+
+    def validate_source(self, source, chat, message):
+        if not isinstance(source, dict) or source.get("uid") != message or source.get("direction") != "inbound" or source.get("chat_uid") != chat:
             raise BridgeError("inbound_message_not_found_in_shared_chat")
         sender = source.get("sender")
         if not isinstance(sender, dict) or sender.get("type") != "member":
@@ -225,7 +321,7 @@ class Bridge:
             result["reply"] = row["reply"]
         return result
 
-    def ask(self, chat, message, alias):
+    def ask(self, chat, message, alias, proof=None, signature=None):
         config = self.authorize(chat)
         identifier(message)
         target = config["agents"].get(alias)
@@ -239,7 +335,7 @@ class Bridge:
                 if previous["target"] != target:
                     raise BridgeError("request_not_shared")
                 return self.receipt(previous)
-        body = self.source_message(config, chat, message)
+        body = self.source_message(config, chat, message, proof, signature)
         available = {row["alias"] for row in self.agents(chat)["agents"]}
         if alias not in available:
             raise BridgeError("local_agent_unavailable")
@@ -325,12 +421,19 @@ def main(argv=None, cfg=None):
     configure.add_argument("--chat", action="append", required=True, help="Authorized Plow conversation UID")
     configure.add_argument("--token-file", default="~/.config/plow/token")
     configure.add_argument("--api-base", default="https://api.plow.co")
+    commands.add_parser("discover", help="Owner: list existing native coding sessions for onboarding")
+    prepare = commands.add_parser("prepare", help="Owner: prepare a private pairing file")
+    prepare.add_argument("--request", required=True)
+    pair = commands.add_parser("pair", help="Owner: consume a private pairing file")
+    pair.add_argument("--request", required=True)
     agents = commands.add_parser("agents", help="List the local agents shared with this conversation")
     agents.add_argument("--chat", required=True)
     ask = commands.add_parser("ask", help="Forward one verified Plow message, once")
     ask.add_argument("--chat", required=True)
     ask.add_argument("--message", required=True)
     ask.add_argument("--agent", required=True)
+    ask.add_argument("--source", help="Authenticated original Plow source, supplied only by the cloud tool")
+    ask.add_argument("--signature", help="Source HMAC, supplied only by the cloud tool")
     result = commands.add_parser("result", help="Read only this conversation's request reply")
     result.add_argument("request")
     result.add_argument("--chat", required=True)
@@ -356,10 +459,16 @@ def main(argv=None, cfg=None):
         bridge = Bridge(settings, config_path, local_config=local_config)
         if args.command == "configure":
             value = bridge.configure(args.agent, args.chat, args.token_file, args.api_base)
+        elif args.command == "discover":
+            value = bridge.discover()
+        elif args.command == "prepare":
+            value = bridge.prepare(args.request)
+        elif args.command == "pair":
+            value = bridge.pair(args.request)
         elif args.command == "agents":
             value = bridge.agents(args.chat)
         elif args.command == "ask":
-            value = bridge.ask(args.chat, args.message, args.agent)
+            value = bridge.ask(args.chat, args.message, args.agent, args.source, args.signature)
         elif args.command == "result":
             value = bridge.result(args.chat, args.request)
             deadline = time.monotonic() + args.wait

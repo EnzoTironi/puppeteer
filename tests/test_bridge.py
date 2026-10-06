@@ -1,6 +1,9 @@
 """Exercise the Plow -> local mp -> correlated reply boundary without credentials."""
 from concurrent.futures import ThreadPoolExecutor
+import base64
 import datetime
+import hashlib
+import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -88,6 +91,84 @@ class BridgeTest(unittest.TestCase):
         command = next(line for line in self.dispatch.call_args.kwargs["input"].splitlines() if line.startswith("env "))
         args = shlex.split(command)
         return args[args.index("--key") + 1]
+
+    def pair_signed(self):
+        request = "b" * 32
+        self.bridge.prepare(request)
+        path = self.bridge.pairing_path(request)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+        path.write_text(json.dumps({"target": "sam/main:coder", "chats": ["cht_shared"], "source_key": "c" * 64}))
+        self.assertEqual(self.bridge.pair(request)["configured"], True)
+        self.assertFalse(path.exists())
+        return request
+
+    def signed_source(self, source=None, key="c" * 64):
+        proof = base64.urlsafe_b64encode(json.dumps(source or self.messages[0]).encode()).decode().rstrip("=")
+        signature = hmac.new(bytes.fromhex(key), proof.encode(), hashlib.sha256).hexdigest()
+        return proof, signature
+
+    def test_owner_pairing_and_signed_requests_need_no_mac_plow_login(self):
+        request = self.pair_signed()
+        (self.root / "token").unlink()
+        self.assertEqual(self.bridge.pair(request)["configured"], True)
+        self.assertEqual(self.bridge.config_path.stat().st_mode & 0o777, 0o600)
+        self.assertNotIn("token_file", self.bridge.config())
+        proof, signature = self.signed_source()
+        receipt = self.bridge.ask("cht_shared", "msg_original", "coder", proof, signature)
+        self.assertEqual(receipt["status"], "submitted")
+        self.assertNotIn("c" * 64, self.dispatch.call_args.kwargs["input"])
+        self.assertNotIn("c" * 64, json.dumps(receipt))
+        self.assertNotIn("c" * 64, (self.bridge.state / "requests.sqlite3").read_bytes().decode(errors="ignore"))
+
+    def test_signed_source_refuses_tampering_and_another_install(self):
+        self.pair_signed()
+        proof, signature = self.signed_source()
+        for candidate, sig in [(proof + "x", signature), (proof, "0" * 64), self.signed_source(key="d" * 64), (None, None)]:
+            with self.subTest(proof=candidate), self.assertRaises(BridgeError):
+                self.bridge.ask("cht_shared", "msg_original", "coder", candidate, sig)
+        self.dispatch.assert_not_called()
+
+    def test_valid_signature_does_not_skip_source_and_prefix_checks(self):
+        self.pair_signed()
+        for changes in [{"uid": "msg_other"}, {"chat_uid": "cht_other"}, {"body": "hello"},
+                        {"sender": {"type": "agent"}}, {"direction": "outbound"},
+                        {"created_at": "2020-01-01T00:00:00Z"}, {"body": "/prompt"}]:
+            with self.subTest(changes=changes), self.assertRaises(BridgeError):
+                self.bridge.ask("cht_shared", "msg_original", "coder", *self.signed_source(dict(self.messages[0], **changes)))
+        self.dispatch.assert_not_called()
+
+    def test_pairing_refuses_remote_missing_and_private_file_misconfiguration(self):
+        request = "b" * 32
+        self.bridge.prepare(request)
+        path = self.bridge.pairing_path(request)
+        for target in ["other/main:coder", "sam/missing:coder", "sam/main:coder; touch /tmp/no"]:
+            path.write_text(json.dumps({"target": target, "chats": ["cht_shared"], "source_key": "c" * 64}))
+            with self.subTest(target=target), self.assertRaisesRegex(BridgeError, "local_agent_unavailable"):
+                self.bridge.pair(request)
+        path.chmod(0o644)
+        with self.assertRaisesRegex(BridgeError, "must_be_private"):
+            self.bridge.pair(request)
+        with patch.dict(os.environ, {"AGENT_ID": "sam/main:coder"}):
+            with self.assertRaisesRegex(BridgeError, "owner_onboarding_required"):
+                self.bridge.prepare(request)
+            with self.assertRaisesRegex(BridgeError, "owner_onboarding_required"):
+                self.bridge.pair(request)
+
+    def test_discovery_exposes_only_native_session_identity(self):
+        value = self.bridge.discover()
+        self.assertEqual(value["local_agents"][0], {"target": "sam/main:coder", "backend": "codex", "status": "unknown"})
+        self.assertNotIn("private-project", json.dumps(value))
+        self.assertNotIn("secret", json.dumps(value))
+
+    def test_pairing_cannot_follow_symlink(self):
+        request = "b" * 32
+        self.bridge.prepare(request)
+        path = self.bridge.pairing_path(request)
+        path.unlink()
+        path.symlink_to(self.root / "token")
+        with self.assertRaises(OSError):
+            self.bridge.prepare(request)
 
     def test_roundtrip_survives_restart_and_replies_only_to_source_chat(self):
         receipt = self.ask()
