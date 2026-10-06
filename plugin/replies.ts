@@ -40,7 +40,7 @@ function errorReply(error: string): string {
 export function publicReply(result: Record<string, unknown>, turn: Turn): string {
   const name = (turn.sender ?? "").replace(/[\p{C}\r\n]/gu, " ").trim().slice(0, 40);
   const id = typeof result.request === "string" && /^[a-f0-9]{32}$/.test(result.request) ? result.request : undefined;
-  const label = id ? "#" + id.slice(0, 8) : "";
+  const label = id && !Array.isArray(result.agents) ? "#" + id.slice(0, 8) : "";
   const alias = typeof result.agent === "string" && /^[a-z0-9][a-z0-9_-]{0,31}$/.test(result.agent) ? result.agent : "coding session";
   const header = [name, label].filter(Boolean).join(" · ");
   const wrap = (text: string): string => header ? header + "\n" + text : text;

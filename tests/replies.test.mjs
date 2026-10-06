@@ -45,8 +45,8 @@ test('long replies are explicit excerpts and can be read in full without new cod
  assert.doesNotMatch(unicode,/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/u);
 });
 test('agent lists expose only validated aliases, backend labels and the next action',()=>{
- const text=publicReply({agents:[{alias:'coder',backend:'codex',target:'/private/project'},{alias:'../../secret',backend:'claude'}]},turn);
- assert.match(text,/coder \(Codex\)/); assert.doesNotMatch(text,/private|secret/);
+ const text=publicReply({request:receipt.request,agents:[{alias:'coder',backend:'codex',target:'/private/project'},{alias:'../../secret',backend:'claude'}]},turn);
+ assert.match(text,/coder \(Codex\)/); assert.doesNotMatch(text,/private|secret|#a1234567/);
  assert.match(publicReply({agents:[]},turn),/No coding session is shared/);
 });
 test('display names cannot create extra lines and empty replies cannot report success',()=>{
