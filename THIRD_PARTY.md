@@ -10,4 +10,6 @@ The local connector started as a proposed addition to the MIT-licensed
 Puppeteer now ships it as a standalone package. It uses MyPlow's installed
 runtime without modifying MyPlow or depending on its Python package.
 
-Puppeteer's connector, persona additions and skill are MIT licensed.
+Puppeteer's connector, guest tools, source customization script, persona
+additions and skill are MIT licensed. The image's customized Plow channel,
+transport, configuration and MCP bridge retain the upstream Apache-2.0 license.

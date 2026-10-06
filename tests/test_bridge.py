@@ -76,7 +76,7 @@ class BridgeTest(unittest.TestCase):
         self.messages[:] = [{"uid": "msg_original", "chat_uid": "cht_shared", "direction": "inbound",
                              "sender": {"type": "member", "display_name": "Guest"},
                              "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                             "body": "Explain this project's entry point. `touch /tmp/never` $(echo no)"}]
+                             "body": "/prompt Explain this project's entry point. `touch /tmp/never` $(echo no)"}]
         self.send = patch("puppeteer_bridge.bridge.subprocess.run", return_value=subprocess.CompletedProcess([], 0, "sent", ""))
         self.dispatch = self.send.start()
         self.addCleanup(self.send.stop)
@@ -109,11 +109,34 @@ class BridgeTest(unittest.TestCase):
         self.dispatch.assert_not_called()
         self.assertEqual(self.bridge.agents("cht_shared")["agents"], [{"alias": "coder", "backend": "codex", "status": "unknown"}])
 
+    def test_only_prompt_at_the_start_can_dispatch(self):
+        original = self.messages[0]["body"]
+        for body in ["hello", "please /prompt fix it", "/promptfoo fix it", " /prompt fix it",
+                     "/PROMPT fix it", "/prompt: fix it", "/prompt\u200b fix it"]:
+            with self.subTest(body=body), self.assertRaisesRegex(BridgeError, "prompt_prefix_required"):
+                self.messages[0]["body"] = body
+                self.ask()
+        self.dispatch.assert_not_called()
+        self.messages[0]["body"] = original
+
+    def test_empty_prompt_does_not_dispatch(self):
+        for body in ["/prompt", "/prompt ", "/prompt\n\t"]:
+            with self.subTest(body=body), self.assertRaisesRegex(BridgeError, "prompt_text_required"):
+                self.messages[0]["body"] = body
+                self.ask()
+        self.dispatch.assert_not_called()
+
+    def test_multiline_prompt_removes_only_the_first_prefix(self):
+        self.messages[0]["body"] = "/prompt\nFix it.\nKeep this literal: /prompt in an example."
+        self.ask()
+        self.assertIn("Fix it.\nKeep this literal: /prompt in an example.", self.dispatch.call_args.kwargs["input"])
+
     def test_prompt_is_verified_at_plow_and_never_a_shell_argument(self):
         receipt = self.ask()
         call = self.dispatch.call_args
         self.assertEqual(call.args[0], [str(self.root / "bin" / "mp"), "send", "sam/main:coder"])
-        self.assertIn(self.messages[0]["body"], call.kwargs["input"])
+        self.assertIn(self.messages[0]["body"][len("/prompt"):].strip(), call.kwargs["input"])
+        self.assertNotIn("/prompt", call.kwargs["input"])
         self.assertNotIn("shell", call.kwargs)
         self.assertIn(receipt["request"], call.kwargs["input"])
         self.assertNotIn("test-token", call.kwargs["input"])
@@ -184,6 +207,17 @@ class BridgeTest(unittest.TestCase):
             with self.assertRaisesRegex(BridgeError, "agent_not_shared"):
                 self.bridge.reply(receipt["request"], "no", self.reply_key())
 
+    def test_changing_alias_target_revokes_old_receipts_and_retries(self):
+        receipt = self.ask()
+        config = self.bridge.config()
+        config["agents"]["coder"] = "sam/main:private"
+        self.bridge.config_path.write_text(json.dumps(config))
+        with self.assertRaisesRegex(BridgeError, "request_not_shared"):
+            self.ask()
+        with self.assertRaisesRegex(BridgeError, "request_not_shared"):
+            self.bridge.result("cht_shared", receipt["request"])
+        self.assertEqual(self.dispatch.call_count, 1)
+
     def test_reply_key_is_bound_to_its_request_and_expires(self):
         first = self.ask()
         first_key = self.reply_key()
@@ -215,7 +249,7 @@ class BridgeTest(unittest.TestCase):
         for payload in ({"data": self.messages, "has_more": False}, self.messages, {"messages": self.messages}):
             with self.subTest(payload=type(payload).__name__):
                 type(self).payload = payload
-                self.assertEqual(self.bridge.source_message(self.bridge.config(), "cht_shared", "msg_original"), self.messages[0]["body"])
+                self.assertEqual(self.bridge.source_message(self.bridge.config(), "cht_shared", "msg_original"), self.messages[0]["body"][len("/prompt"):].strip())
 
     def test_burst_message_is_verified_from_older_page(self):
         type(self).pages = {None: {"data": [{"uid": "msg_newer"}], "has_more": True},

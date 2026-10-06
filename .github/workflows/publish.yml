@@ -23,6 +23,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test narrow group tools
+        run: |
+          npm ci --ignore-scripts --include=dev
+          npm test
+          npm run typecheck
       - name: Test connector without installing MyPlow
         run: python3 -m unittest discover -s tests -v
       - name: Verify standalone package
@@ -55,6 +63,9 @@ jobs:
           docker run --rm --entrypoint /bin/sh "ghcr.io/$owner/puppeteer-openclaw:$GITHUB_SHA" -ec '
             test "$AGENT_ID" = puppeteer
             test "$AGENT_RUNTIME" = OpenClaw
+            test "$PLOW_THREAD_TRUST" = untrusted
+            test "$PLOW_GUEST_TOOLS" = puppeteer_agents,puppeteer_ask,puppeteer_result
+            node --check /opt/plow/plugin/dist/puppeteer.js
             test -s /opt/plow/prompt/AGENTS.md
             test -s /opt/plow/skills/puppeteer/SKILL.md
             test -s /usr/share/licenses/puppeteer/LICENSE
@@ -63,6 +74,13 @@ jobs:
             test -x /opt/plow/probe
             python3 /opt/plow/agent-index-client.py --help >/dev/null
             agentsview --version
+          '
+      - name: Test actual Plow group ingress and source binding
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          docker run --rm --user 0 -v "$PWD/tests/group-ingress.test.mjs:/tmp/group-ingress.test.mjs:ro" --entrypoint /bin/sh "ghcr.io/$owner/puppeteer-openclaw:$GITHUB_SHA" -ec '
+            ln -s /app /opt/plow/node_modules/openclaw
+            node --test /tmp/group-ingress.test.mjs
           '
       - name: Boot offline gateway probe
         run: |

@@ -211,7 +211,12 @@ class Bridge:
                 raise ValueError()
         except (KeyError, ValueError, AttributeError):
             raise BridgeError("source_message_expired_or_invalid")
-        return body
+        if not re.match(r"^/prompt(?:[ \t\r\n]|$)", body):
+            raise BridgeError("prompt_prefix_required")
+        prompt = body[len("/prompt"):].strip()
+        if not prompt:
+            raise BridgeError("prompt_text_required")
+        return prompt
 
     @staticmethod
     def receipt(row):
@@ -231,6 +236,8 @@ class Bridge:
             if previous:
                 if previous["alias"] != alias:
                     raise BridgeError("source_message_already_routed_to_another_agent")
+                if previous["target"] != target:
+                    raise BridgeError("request_not_shared")
                 return self.receipt(previous)
         body = self.source_message(config, chat, message)
         available = {row["alias"] for row in self.agents(chat)["agents"]}

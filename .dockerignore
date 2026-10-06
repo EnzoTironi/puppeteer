@@ -8,3 +8,5 @@ dist
 tests
 puppeteer_bridge
 README.md
+
+node_modules/

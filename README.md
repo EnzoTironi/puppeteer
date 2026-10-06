@@ -4,7 +4,7 @@ Let people in a Plow conversation talk to the Claude Code and Codex agents
 running in MyPlow on your Mac. The local agent keeps its session and project,
 and its reply returns to the conversation that asked.
 
-Puppeteer is a OpenClaw variant built on the public Plow base image. Plow Chat
+Puppeteer is an OpenClaw variant built on the public Plow base image. Plow Chat
 carries the conversation; Plow Latch connects to the Mac; MyPlow's `mp send`
 reaches the existing session. There is no custom relay or inbound Mac port.
 
@@ -49,10 +49,10 @@ Log in with `plow-agents login` on the Mac. Its account token stays at
 `~/.config/plow/token`; it is never copied into the cloud image.
 
 Use `mypeople status` to find the full local agent ID. Use Plow's conversation
-UID for the owner DM or group you want to share. In a group, the owner
-also marks that room trusted in Plow so participant turns can use Latch.
-Direct chats from non-owners do not get those tools by default. For an audience
-demo, use an owner-approved group and share a dedicated demo coding session.
+UID for the owner DM or group you want to share. Keep the group untrusted:
+Puppeteer exposes only three narrow bridge tools to participants. The owner
+also gets only those three tools in a group. Latch still approves the fixed
+bridge operations. For an audience demo, share a dedicated coding session.
 Run this in the owner's Mac terminal, replacing the sample IDs:
 
 ```sh
@@ -70,13 +70,52 @@ to its stored replies. To turn off sharing, remove `~/.config/puppeteer/bridge.j
 The CLI uses MyPlow's `MYPEOPLE_CONFIG_PATH` / `MYPEOPLE_HOME` configuration.
 `PUPPETEER_CONFIG` overrides the bridge configuration path.
 `--token-file` overrides the local Plow account-token path. Custom homes
-need matching read/write paths in Latch's approved command capabilities.
+need matching owner-configured `PUPPETEER_MAC_READ_PATHS` and
+`PUPPETEER_MAC_WRITE_PATHS` JSON arrays in the cloud deployment environment.
+These paths cannot be supplied by a guest. Include the selected native runtime
+directory in the write paths because `mp send` updates its queues as well as
+the bridge ledger.
 The owner-selected MyPlow configuration path is saved when running `configure`,
 so later Latch commands and reply callbacks use that same local team.
 
+## Audience demo with Sam's Mac
+
+Sam runs **one Puppeteer deployment on his Plow account**, with his Mac's
+Latch signed into that same account. He adds its phone number and the audience
+to one iMessage group, then grants that group UID with the command above.
+Audience members only join the group; they do not install another agent.
+Deploying a separate copy under another account connects to that account's
+Mac, not automatically to Sam's.
+
+Only human messages that begin with the exact `/prompt` command are processed:
+
+```text
+/prompt List the shared coding agents
+/prompt Fix the failing test in the demo project
+/prompt coder: Explain what this project does
+```
+
+Normal conversation, `/promptfoo`, and `/prompt` appearing inside a sentence
+are ignored before the model and are not forwarded to MyPlow. `/prompt` alone
+gets a usage example and never starts local work. The command is case sensitive
+and must be at the start of the message. Its prefix is removed before the
+verified task reaches the local coding session. Use `/prompt status RECEIPT`
+to resume an interrupted request in that same group.
+
+The runtime binds each tool to its actual current chat and inbound message.
+Guests cannot supply replacement text, another chat/message ID, paths, shell
+commands, or Latch output handles. Pending approvals and running commands
+use private, conversation-bound receipts. The Mac also enforces the prefix,
+chat grant, agent grant, source identity, age, and request deduplication.
+
 ## Run the cloud agent locally
 
-From this repository, with Docker running and `plow-agents` installed:
+Clone the agent branch, then run it with Docker and `plow-agents` installed:
+
+```sh
+git clone --branch feat/openclaw-agent https://github.com/EnzoTironi/puppeteer.git
+cd puppeteer
+```
 
 ```sh
 plow-agents login
@@ -98,8 +137,8 @@ docker compose up -d --force-recreate
 docker compose logs -f
 ```
 
-Text the selected number and ask which local agents are shared. Ask one to
-explain its project or make a small change in a demo repository. Approve the
+Text the selected number with `/prompt List the shared coding agents`. Ask one to
+explain its project or make a small change, for example `/prompt Fix the failing test in the demo project`. Approve the
 bridge command in Latch when it asks. Confirm the reply arrives in that same
 conversation and the existing local session handled the task.
 
@@ -149,7 +188,7 @@ image or registering a listing alone does not complete that verification.
 
 The local bridge accepts configured agent aliases and conversations.
 It fetches the original inbound text from Plow using the Mac's own token,
-checks the conversation and timestamp, and passes it to `mp send` on stdin.
+checks the conversation, timestamp and `/prompt` prefix, then passes the command's remaining text to `mp send` on stdin.
 It never interprets the participant's text as a shell command.
 
 Each source message gets one persistent request ID. Concurrent retries do
@@ -173,14 +212,20 @@ its existing project access, so choose an appropriate agent and project.
 The connector is a standalone Python package with no MyPlow package dependency.
 It reads the native MyPlow `queue.env`, roster and status files, and calls the
 installed runtime's `bin/mp`. It does not patch MyPlow or use its private Python API.
-The cloud image inherits Plow's OpenClaw boot, plugin and Agent Index reporter.
+The cloud image inherits Plow's OpenClaw boot and Agent Index reporter. It
+adds three ordinary tools to the pinned Plow plugin, filters group ingress,
+disables command coalescing, and forwards MCP's tool-name header. The build
+fails if any expected pinned-source anchor changes.
 
 ## Verify
 
 From the repository root:
 
 ```sh
-python3 -m unittest discover -s tests -p 'test_bridge.py' -v
+python3 -m unittest discover -s tests -v
+npm ci --ignore-scripts
+npm test
+npm run typecheck
 ```
 
 These tests exercise HTTP source verification, concurrent duplicate
