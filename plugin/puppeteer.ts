@@ -1,6 +1,7 @@
 import type { OpenClawPluginApi, OpenClawPluginToolContext } from "openclaw/plugin-sdk/core";
 import { Latch, object } from "./latch.ts";
-import { Requests, type Turn } from "./requests.ts";
+import { Requests, type Setup, type Turn } from "./requests.ts";
+import { Plow } from "./plow.ts";
 
 export function isPrompt(body: string | null | undefined): boolean {
   return typeof body === "string" && /^\/prompt(?:[ \t\r\n]|$)/.test(body);
@@ -29,17 +30,34 @@ function params(value: unknown, key?: string): string {
   return value[key];
 }
 
-function currentTurn(context: OpenClawPluginToolContext<2>, id: string): Turn {
+function ownerMain(context: OpenClawPluginToolContext<2>, turn: Turn): boolean {
+  return turn.owner === true && context.senderIsOwner === true && context.requesterSenderId === "plow-owner"
+    && context.sessionKey === "agent:main:main";
+}
+
+function currentTurn(context: OpenClawPluginToolContext<2>, id: string, allowOwner = false): Turn {
   context.assertInvocationCurrent();
   const bound = calls.get(id);
   calls.delete(id);
   const chat = (context.nativeChannelId ?? context.deliveryContext?.to)?.replace(/^plow:/i, "");
   if (!bound || turns.get(bound.run) !== bound.turn || context.messageChannel !== "plow"
     || context.agentAccountId !== "chat" || !context.requesterSenderId
-    || chat !== bound.turn.chat || context.sessionKey !== bound.turn.session || !isPrompt(bound.turn.prompt)) {
+    || chat !== bound.turn.chat || context.sessionKey !== bound.turn.session
+    || (!isPrompt(bound.turn.prompt) && !(allowOwner && ownerMain(context, bound.turn)))) {
     throw new Error("verified_prompt_turn_required");
   }
   return bound.turn;
+}
+
+function setupParams(value: unknown): Setup {
+  if (!object(value) || Object.keys(value).some(key => !["action", "target", "group"].includes(key))) throw new Error("invalid_setup_arguments");
+  if (value.action === "install" || value.action === "inspect" || value.action === "groups") {
+    if (Object.keys(value).length !== 1) throw new Error("invalid_setup_arguments");
+    return { action: value.action };
+  }
+  if (value.action !== "share" || typeof value.target !== "string"
+    || (value.group !== undefined && (typeof value.group !== "string" || !/^cht_[A-Za-z0-9_-]+$/.test(value.group)))) throw new Error("invalid_setup_arguments");
+  return { action: "share", target: value.target, group: value.group };
 }
 
 function macPaths(): { read: string[]; write: string[] } {
@@ -57,13 +75,14 @@ function macPaths(): { read: string[]; write: string[] } {
 }
 
 export function registerPuppeteer(api: OpenClawPluginApi): void {
-  const names = new Set(["puppeteer_agents", "puppeteer_ask", "puppeteer_result"]);
+  const names = new Set(["puppeteer_agents", "puppeteer_ask", "puppeteer_result", "puppeteer_setup"]);
   api.on("before_tool_call", (event, context) => {
     if (!names.has(event.toolName)) return;
     const run = event.runId ?? context.runId;
     const id = event.toolCallId ?? context.toolCallId;
     const turn = run ? turns.get(run) : undefined;
-    if (!run || !id || !turn || context.sessionKey !== turn.session || !isPrompt(turn.prompt)) {
+    if (!run || !id || !turn || context.sessionKey !== turn.session
+      || (!isPrompt(turn.prompt) && !(turn.owner && turn.session === "agent:main:main" && ["puppeteer_setup", "puppeteer_result"].includes(event.toolName)))) {
       return { block: true, blockReason: "Puppeteer requires the current verified /prompt message." };
     }
     calls.set(id, { run, turn });
@@ -72,7 +91,8 @@ export function registerPuppeteer(api: OpenClawPluginApi): void {
     const id = event.toolCallId ?? context.toolCallId;
     if (id) calls.delete(id);
   });
-  const requests = globalThis.__puppeteerRequests ??= new Requests(new Latch(process.env.PLOW_MCP_BRIDGE_TOKEN ?? ""), process.env.PUPPETEER_STATE_DIR, macPaths());
+  const requests = globalThis.__puppeteerRequests ??= new Requests(new Latch(process.env.PLOW_MCP_BRIDGE_TOKEN ?? ""), process.env.PUPPETEER_STATE_DIR, macPaths(),
+    new Plow(process.env.PLOW_API_BASE ?? "", process.env.PLOW_AGENT_TOKEN ?? ""));
   const tools = [
     { name: "puppeteer_agents", label: "List shared coding agents", key: undefined,
       description: "List the coding agents the owner shared with this current /prompt conversation. No access to other chats or private sessions." },
@@ -88,7 +108,7 @@ export function registerPuppeteer(api: OpenClawPluginApi): void {
       async execute(id, args, signal) {
         try {
           const value = params(args, tool.key);
-          const turn = currentTurn(context, id);
+          const turn = currentTurn(context, id, tool.name === "puppeteer_result");
           const result = tool.name === "puppeteer_agents" ? await requests.agents(turn, signal)
             : tool.name === "puppeteer_ask" ? await requests.ask(turn, value, signal)
             : await requests.result(turn, value, signal);
@@ -100,4 +120,25 @@ export function registerPuppeteer(api: OpenClawPluginApi): void {
       },
     }) });
   }
+  api.registerTool({ contextVersion: 2, create: context => ({
+    name: "puppeteer_setup", label: "Set up Puppeteer on the owner's Mac",
+    description: "Owner's main private Plow DM only. install installs the fixed pinned connector through Latch, inspect lists existing MyPlow session IDs, groups lists this owner's groups containing Puppeteer, share exposes one selected native target as coder to this DM and optionally one selected group. share replaces previous grants. No terminal commands, paths, credentials or replacement prompts are accepted. Use puppeteer_result to resume any pending receipt, never repeat the installation or pairing.",
+    parameters: { type: "object", additionalProperties: false, required: ["action"], properties: {
+      action: { type: "string", enum: ["install", "inspect", "groups", "share"] },
+      target: { type: "string", description: "Required only for share: an exact native ID returned by inspect, selected by the owner." },
+      group: { type: "string", description: "Optional only for share: a chat UID returned by groups, selected by the owner. Omit to share only with this owner DM." },
+    } },
+    async execute(id, args, signal) {
+      try {
+        const input = setupParams(args);
+        const turn = currentTurn(context, id, true);
+        if (!ownerMain(context, turn)) throw new Error("owner_main_dm_required");
+        const result = await requests.setup(turn, input, signal);
+        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+      } catch (error) {
+        const result = { error: error instanceof Error ? error.message : "puppeteer_setup_failed" };
+        return { isError: true, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+      }
+    },
+  }) });
 }

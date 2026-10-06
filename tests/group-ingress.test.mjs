@@ -16,6 +16,7 @@ for (const owner of [false,true]) for(const trusted of [false,true]) test(`real 
  await writeFile(root+'/plow-listening-since',new Date().toISOString());
  const server=new WebSocketServer({port:0});
  await new Promise(resolve=>server.on('listening',resolve));
+ process.env.PLOW_API_BASE='http://127.0.0.1:'+server.address().port;
  const controller=new AbortController();
  const timeout=setTimeout(()=>controller.abort(),4000);
  t.after(async()=>{clearTimeout(timeout);controller.abort();for(const socket of server.clients)socket.terminate();await new Promise(resolve=>server.close(resolve));await rm(root,{recursive:true,force:true,maxRetries:3});});
@@ -24,14 +25,14 @@ for (const owner of [false,true]) for(const trusted of [false,true]) test(`real 
  const bodies=['ordinary conversation','some /prompt inside text','/promptfoo nope',' /prompt nope','/PROMPT nope','/prompt First task','/prompt Second task'];
  const inbound=bodies.map((body,i)=>({uid:'msg_'+i,chat_uid:chat.uid,direction:'inbound',sender:member,body,attachments:[],created_at:new Date().toISOString()}));
  const logs=[], acked=new Set(), dispatched=[], commands=[],hooks=new Map(),tools=[];
- let channel;
+ let channel,verifyingSource=false;
  t.mock.method(globalThis,'fetch',async(url,init)=>{
   if(String(url).endsWith(':18790/mcp')){
    const rpc=JSON.parse(init.body); const args=rpc.params.arguments;
    commands.push(args.argv);
    return Response.json({jsonrpc:'2.0',id:rpc.id,result:{content:[{type:'text',text:JSON.stringify({status:'completed',output:JSON.stringify({request:'a'.repeat(32),agent:'coder',status:'submitted'})+'\n',exit_code:0})}]}});
   }
-  return Response.json(String(url).endsWith('/chats')?{data:[chat],has_more:false}:String(url).endsWith('/chats/cht_group')?chat:String(url).includes('/messages?')?{data:[{...inbound[0],uid:'history',body:'private ordinary history'}],has_more:false}:{ticket:'ticket'});
+  return Response.json(String(url).endsWith('/agents/me')?{line:{uid:'line'}}:String(url).endsWith('/chats')?{data:[chat],has_more:false}:String(url).endsWith('/chats/cht_group')?chat:String(url).includes('/messages?')?{data:verifyingSource?inbound:[{...inbound[0],uid:'history',body:'private ordinary history'}],has_more:false}:{ticket:'ticket'});
  });
  entry.register({registrationMode:'full',config:{},on:(name,fn)=>hooks.set(name,fn),registerTool:f=>tools.push(f),logger:{info(){}},registerChannel:({plugin})=>{channel=plugin;},runtime:{channel:{
   routing:{resolveAgentRoute:()=>({agentId:'main',sessionKey:'group-session'})},
@@ -42,7 +43,9 @@ for (const owner of [false,true]) for(const trusted of [false,true]) test(`real 
    const context={messageChannel:'plow',agentAccountId:'chat',nativeChannelId:'cht_group',requesterSenderId:owner?'plow-owner':member.provider_key,senderIsOwner:owner,sessionKey:'group-session',assertInvocationCurrent(){}};
    const tool=tools.filter(f=>f.contextVersion===2).map(f=>f.create(context)).find(tool=>tool.name==='puppeteer_ask');
    hooks.get('before_tool_call')({toolName:tool.name,toolCallId:uid,runId:'run-'+uid},{sessionKey:'group-session'});
+   verifyingSource=true;
    const result=await tool.execute(uid,{agent:'coder'});
+   verifyingSource=false;
    logs.push('fixture tool result '+JSON.stringify(result));
    assert.equal(result.details.status,'submitted',JSON.stringify(result));
    assert.equal(dispatch.replyOptions.sourceReplyDeliveryMode,'automatic');

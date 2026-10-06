@@ -15,7 +15,8 @@ Use only these ordinary OpenClaw tools for this workflow:
 - `puppeteer_agents({})`: list aliases shared with the current conversation.
 - `puppeteer_ask({"agent":"ALIAS"})`: forward the current original `/prompt`
   message to that existing local agent. No prompt, chat ID, message ID, path,
-  or shell command can be supplied. The Mac fetches and verifies the source.
+  or shell command can be supplied. The cloud verifies the original Plow source
+  and the paired Mac verifies its authenticated proof and local grants.
 - `puppeteer_result({"request":"RECEIPT"})`: resume the receipt in this chat.
   It polls the original Latch approval or command, then reads the actual local
   coding-agent answer. Never repeat an ask while waiting.
@@ -37,10 +38,16 @@ routing. On denial, revoked access, `not_ready`, `send_failed`, or `timed_out`,
 report the status and stop. For `delivery_unknown`, do not automatically
 resubmit; the task may already be running.
 
-The owner installs MyPlow and the separate connector on their Mac, signs
-Latch and Puppeteer into the same Plow account, and grants the group and agent
-aliases with `puppeteer-bridge configure` from the Mac terminal. Never modify
-grants from chat, run raw Mac commands, read terminal transcripts, or create a
-cloud coding session as a substitute. An access refusal never authorizes
-another route. Participants join one owner's group; they do not need their
-own cloud deployments to reach the shared Mac.
+In the owner's main private DM, use `puppeteer_setup` for onboarding without
+a terminal: `install`, then `inspect` and `groups`, then `share` with the owner's
+selected native `target` and optional `group` UID. Share replaces previous
+grants with alias `coder`, the owner DM and at most one group. Resume pending
+receipts with `puppeteer_result`. This tool independently checks SDK owner
+identity, the original Plow message and group membership. No extra Mac Plow
+CLI login is needed. Install uses a fixed immutable repository commit; pairing
+uses private files and never reveals account credentials or source keys.
+
+Never modify grants through raw tools, run arbitrary Mac commands, read
+terminal transcripts, or create a cloud coding session as a substitute.
+An access refusal never authorizes another route. Participants join one
+owner's group; they do not need their own deployments to reach the shared Mac.

@@ -19,70 +19,72 @@ flowchart LR
   Cloud --> Guest
 ```
 
-## Install on the Mac
+## Connect an existing MyPlow Mac without a terminal
 
-Keep your existing MyPlow installation and install the separate connector:
+Deploy Puppeteer on the **same Plow account** as your Mac's Latch. The Agent
+Index's 1-click button becomes available after the Plow admin admits the
+public image; until then, use the cloud deployment instructions below.
 
-```sh
-uv tool install 'git+https://github.com/EnzoTironi/puppeteer.git@feat/openclaw-agent'
+Keep your existing MyPlow installation and running coding sessions. Keep
+Latch open and the Mac awake. Text Puppeteer privately:
+
+```text
+Set up Puppeteer on my Mac.
 ```
 
-If MyPlow is not installed, run `uv tool install mypeople` first. On macOS with
-Homebrew, install its terminal dependencies, authenticate a coding backend,
-and start a local team:
+Puppeteer installs the separate MIT connector through Latch from an immutable
+repository commit. Approve the installation in Latch when requested. Then
+select an existing MyPlow session and the iMessage group you want to share.
+The owner-only setup tool lists native agent IDs and available groups, prepares
+private pairing files, and grants alias `coder` to your private DM and at most
+one selected group. Sharing again replaces those grants. Pending approvals
+resume their original receipt; installation and pairing are not repeated.
+
+**No Mac terminal commands or additional `plow-agents login` are needed for
+this guided path.** MyPlow supplies `uv` and the local runtime. The connector
+reads native MyPlow configuration and calls its installed `mp send`. It reaches
+sessions managed by MyPlow, including Claude Code and Codex; it does not attach
+to arbitrary Codex desktop tabs or unmanaged terminals.
+
+Setup is restricted to the authenticated owner's main private DM. In every
+phone group, including trusted groups and the owner's turns, only the three
+narrow coding tools are available. The owner chooses the session and group;
+the model cannot supply commands, paths, credentials, or replacement prompts.
+For an audience demo, select a dedicated coding session and project.
+
+If MyPlow is missing, install and authenticate it before this flow using its
+[upstream instructions](https://github.com/delattre1/mypeople). If Latch refuses
+an operation, Puppeteer reports the refusal; it does not bypass it.
+
+To stop sharing, remove `~/.config/puppeteer/bridge.json` on the Mac. This does
+not stop the coding sessions. Custom MyPlow homes can use owner-configured
+`PUPPETEER_MAC_READ_PATHS` and `PUPPETEER_MAC_WRITE_PATHS` JSON arrays in the
+cloud environment, with the selected runtime directory included for writes.
+
+## Advanced: manual connector setup
+
+The original terminal path remains available for custom deployments:
 
 ```sh
-brew install tmux ttyd asciinema
-codex login
-mypeople up --backend codex --detach
-mypeople status
-```
-
-For Claude Code, use `claude auth login` and `--backend claude` instead.
-Confirm the target agent can answer locally. This bridge reaches sessions
-managed by MyPlow; it does not attach to arbitrary Codex desktop tabs or
-unmanaged Claude terminals. Install and sign in
-to [Plow Latch](https://github.com/plow-pbc/latch) on the same Plow account
-used for Puppeteer. Keep the Mac awake and Latch open during the demo.
-
-Log in with `plow-agents login` on the Mac. Its account token stays at
-`~/.config/plow/token`; it is never copied into the cloud image.
-
-Use `mypeople status` to find the full local agent ID. Use Plow's conversation
-UID for the owner DM or group you want to share. Keep the group untrusted:
-Puppeteer exposes only three narrow bridge tools to participants. The owner
-also gets only those three tools in a group. Latch still approves the fixed
-bridge operations. For an audience demo, share a dedicated coding session.
-Run this in the owner's Mac terminal, replacing the sample IDs:
-
-```sh
+uv tool install 'git+https://github.com/EnzoTironi/puppeteer.git@534752a149e5eae9c74a39c85ab1e8aad660df43'
+plow-agents login
 puppeteer-bridge configure \
   --agent coder=sams-mac/main:eng-codex \
   --chat cht_YOUR_CONVERSATION
-puppeteer-bridge agents --chat cht_YOUR_CONVERSATION
 ```
 
-Repeat `--agent alias=full-id` and `--chat UID` to share more. All listed
-conversations can ask all listed agents. Running `configure` replaces the
-complete grant list. Removing a conversation or alias also revokes access
-to its stored replies. To turn off sharing, remove `~/.config/puppeteer/bridge.json`. This does not stop the coding agents.
-
-The CLI uses MyPlow's `MYPEOPLE_CONFIG_PATH` / `MYPEOPLE_HOME` configuration.
-`PUPPETEER_CONFIG` overrides the bridge configuration path.
-`--token-file` overrides the local Plow account-token path. Custom homes
-need matching owner-configured `PUPPETEER_MAC_READ_PATHS` and
-`PUPPETEER_MAC_WRITE_PATHS` JSON arrays in the cloud deployment environment.
-These paths cannot be supplied by a guest. Include the selected native runtime
-directory in the write paths because `mp send` updates its queues as well as
-the bridge ledger.
-The owner-selected MyPlow configuration path is saved when running `configure`,
-so later Latch commands and reply callbacks use that same local team.
+Manual configuration uses the Mac's own `~/.config/plow/token` to fetch and
+verify original Plow messages; it is not copied into the cloud. Pair through
+the guided owner setup before using the cloud image's signed dispatch path.
+`MYPEOPLE_CONFIG_PATH`, `MYPEOPLE_HOME`, `PUPPETEER_CONFIG`, `--token-file` and
+`--api-base` support custom installations. Configure replaces the complete
+agent and conversation grant list. Revoking a grant also revokes stored replies.
 
 ## Audience demo with Sam's Mac
 
 Sam runs **one Puppeteer deployment on his Plow account**, with his Mac's
 Latch signed into that same account. He adds its phone number and the audience
-to one iMessage group, then grants that group UID with the command above.
+to one iMessage group, then selects that group in Puppeteer’s private setup conversation.
 Audience members only join the group; they do not install another agent.
 Deploying a separate copy under another account connects to that account's
 Mac, not automatically to Sam's.
@@ -187,8 +189,13 @@ image or registering a listing alone does not complete that verification.
 ## Behavior
 
 The local bridge accepts configured agent aliases and conversations.
-It fetches the original inbound text from Plow using the Mac's own token,
-checks the conversation, timestamp and `/prompt` prefix, then passes the command's remaining text to `mp send` on stdin.
+The cloud tool fetches the original inbound text using its own deployment
+credential, checks the actual sender and conversation, and signs a proof with
+a per-install pairing key. The paired Mac verifies the signature, source UID,
+conversation, timestamp and `/prompt` prefix, then passes the remaining text
+to `mp send` on stdin. Account credentials never leave their original host;
+the source key stays in private files and is absent from tool results and
+request ledgers. The manual CLI path can instead verify with a local Plow token.
 It never interprets the participant's text as a shell command.
 
 Each source message gets one persistent request ID. Concurrent retries do
@@ -213,7 +220,7 @@ The connector is a standalone Python package with no MyPlow package dependency.
 It reads the native MyPlow `queue.env`, roster and status files, and calls the
 installed runtime's `bin/mp`. It does not patch MyPlow or use its private Python API.
 The cloud image inherits Plow's OpenClaw boot and Agent Index reporter. It
-adds three ordinary tools to the pinned Plow plugin, filters group ingress,
+adds three audience tools and one owner-only setup tool to the pinned Plow plugin, filters group ingress,
 disables command coalescing, and forwards MCP's tool-name header. The build
 fails if any expected pinned-source anchor changes.
 
