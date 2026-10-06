@@ -2,7 +2,8 @@
 
 Let people in a Plow conversation talk to the Claude Code and Codex agents
 running in MyPlow on your Mac. Use an existing session for one task at a time,
-or let your existing Boss supervise separate workers for a live group. Each
+or let a MyPlow Boss supervise separate workers for a live group. Guided setup
+reuses your existing Boss or creates one when needed. Each
 reply returns to the participant and conversation that asked.
 
 Puppeteer is an OpenClaw variant built on the public Plow base image. Plow Chat
@@ -33,13 +34,24 @@ Latch open and the Mac awake. Text Puppeteer privately:
 Set up Puppeteer on my Mac.
 ```
 
-Puppeteer installs the separate MIT connector through Latch from an immutable
-repository commit. Approve the installation in Latch when requested. Then
-select an existing MyPlow session and the iMessage group you want to share.
-The owner-only setup tool lists native agent IDs and available groups, prepares
-private pairing files, and grants alias `coder` to your private DM and at most
-one selected group. Sharing again replaces those grants. Pending approvals
-resume their original receipt; installation and pairing are not repeated.
+Puppeteer installs its pinned MIT connector through Latch and checks your Mac.
+It offers to create an iMessage group and use your existing MyPlow Boss. If it
+finds no Boss, it creates one for the group. Give it the first participant's
+iMessage phone number or email. It creates the group, prepares a fresh coding
+workspace with a Git commit and a passing test, and connects four parallel
+workers. You can add more people in iMessage.
+
+For example, when an existing Boss is found:
+
+> I found your MyPlow Boss. I can create an iMessage group and a fresh coding
+> workspace for it. Who should I add first? Send their phone number or iMessage email.
+
+You do not need to copy technical IDs, prepare a demo repo or choose a worker
+count. If you want an existing group or project, tell Puppeteer its name instead.
+The owner-only demo operation prepares fixed local resources; the subsequent
+share operation grants alias `coder` to your private DM and at most one chosen
+group. Sharing again replaces those grants. Pending approvals resume their
+original receipts, and setup retries preserve the workspace and native sessions.
 
 **No Mac terminal commands or additional `plow-agents login` are needed for
 this guided path.** MyPlow supplies `uv` and the local runtime. The connector
@@ -51,7 +63,7 @@ Setup is restricted to the authenticated owner's main private DM. In every
 phone group, including trusted groups and the owner's turns, only the three
 narrow coding tools are available. The owner chooses the session and group;
 the model cannot supply commands, paths, credentials, or replacement prompts.
-For an audience demo, select a dedicated coding session and project.
+The default audience setup creates a fresh coding project.
 
 If MyPlow is missing, install and authenticate it before this flow using its
 [upstream instructions](https://github.com/delattre1/mypeople). If Latch refuses
@@ -69,7 +81,7 @@ cloud environment, with the selected runtime directory included for writes.
 The original terminal path remains available for custom deployments:
 
 ```sh
-uv tool install 'git+https://github.com/EnzoTironi/puppeteer.git@971af67f7d02febac33110d9eb686a3b3099dcd9'
+uv tool install 'git+https://github.com/EnzoTironi/puppeteer.git@6c0cc5fbf04e43b84e290abbc39606ecac2b00c4'
 plow-agents login
 puppeteer-bridge configure \
   --agent coder=sams-mac/main:eng-codex \
@@ -86,8 +98,10 @@ agent and conversation grant list. Revoking a grant also revokes stored replies.
 ## Audience demo with Sam's Mac
 
 Sam runs **one Puppeteer deployment on his Plow account**, with his Mac's
-Latch signed into that same account. He adds its phone number and the audience
-to one iMessage group, then selects that group in Puppeteer’s private setup conversation.
+Latch signed into that same account. In Puppeteer's private setup conversation,
+he asks it to create the audience group and supplies the first participant's
+iMessage number or email. He can add more people in iMessage afterward, or
+choose an existing group by name.
 Audience members only join the group; they do not install another agent.
 Deploying a separate copy under another account connects to that account's
 Mac, not automatically to Sam's.
@@ -136,19 +150,16 @@ local answer. It drops free-form model commentary and fabricated result text.
 A submitted task is never described as completed. Only the actual Latch
 `awaiting_approval` state asks the Mac owner to approve.
 
-For an audience, enable parallel mode in the owner's private setup chat:
+For an audience, ask Puppeteer privately to create a group for your demo.
+The guided flow uses the existing Boss or creates one, prepares a new Git project
+and connects four workers automatically. Audience members join that group.
 
-```text
-Use my existing MyPlow Boss to supervise parallel demo workers.
-Use my dedicated demo project session. Start with four workers.
-```
-
-The owner chooses two existing native IDs from `inspect`: the Boss and a
-Claude Code or Codex project session at a Git root with at least one commit.
-The owner-only `share` tool accepts `target` for the Boss, `project` for that
-session, `workers` from 1 to 8, and the selected group. Four workers is the
-default. No terminal commands are needed to connect an existing Git project.
-A project without a Git commit needs preparation before parallel mode.
+If you explicitly want your existing project, name it in the private setup chat.
+Puppeteer uses inspected native IDs internally. The owner-only `share` tool
+accepts a Boss target, a Claude Code or Codex project session at a Git root with
+at least one commit, a worker count from one to eight and an optional group.
+Four workers is the default. This advanced path remains available without
+turning the default onboarding into a configuration questionnaire.
 
 Puppeteer verifies the original message, records it in a private SQLite queue,
 and starts separate native workers with `mp spawn --boss SELECTED_BOSS`.

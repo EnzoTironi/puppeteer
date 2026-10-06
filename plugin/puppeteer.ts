@@ -81,6 +81,13 @@ function setupParams(value: unknown): Setup {
     if (Object.keys(value).length !== 1) throw new Error("invalid_setup_arguments");
     return { action: value.action };
   }
+  if (value.action === "demo") {
+    if (Object.keys(value).some(key => !["action", "group", "target"].includes(key))
+      || typeof value.group !== "string" || !/^cht_[A-Za-z0-9_-]+$/.test(value.group)
+      || (value.target !== undefined && (typeof value.target !== "string"
+        || !/^[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$/.test(value.target)))) throw new Error("invalid_setup_arguments");
+    return { action: "demo", group: value.group, ...(typeof value.target === "string" ? { target: value.target } : {}) };
+  }
   if (value.action !== "share" || typeof value.target !== "string"
     || (value.group !== undefined && (typeof value.group !== "string" || !/^cht_[A-Za-z0-9_-]+$/.test(value.group)))) throw new Error("invalid_setup_arguments");
   if (value.project !== undefined && (typeof value.project !== "string" || !/^[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$/.test(value.project))) throw new Error("invalid_setup_arguments");
@@ -158,13 +165,13 @@ export function registerPuppeteer(api: OpenClawPluginApi): void {
   }
   api.registerTool({ contextVersion: 2, create: context => ({
     name: "puppeteer_setup", label: "Set up Puppeteer on the owner's Mac",
-    description: "Owner's main private Plow DM only. stop pauses the parallel demo, cancels queued requests and retires only its native workers while preserving worktrees. install installs the fixed pinned connector through Latch, inspect lists existing MyPlow session IDs, groups lists this owner's groups containing Puppeteer, share exposes one selected native target as coder. To enable parallel work, target must be an existing Boss, project must be an owner-selected existing coding session at a Git project root, and workers selects 1 to 8 workers, default 4. Each task uses a separate detached worktree under that Boss to this DM and optionally one selected group. share replaces previous grants. No terminal commands, paths, credentials or replacement prompts are accepted. Use puppeteer_result to resume any pending receipt, never repeat the installation or pairing.",
+    description: "Owner's main private Plow DM only. install installs the pinned connector, inspect finds native sessions, and groups lists the owner's groups. For easy onboarding, create a group with plow_start_thread or use an owner-selected existing group, then call demo with its group UID. demo reuses the default existing Boss or creates a group Boss if none exists, and prepares a fresh Git coding workspace and native project session. It returns target and project for an immediate share with four workers; demo alone grants no group access. Keep native IDs internal. For an explicitly requested existing project, inspect then share its selected target and project instead. share replaces grants. stop pauses the demo and retires its workers. No raw commands, paths, credentials or replacement prompts are accepted. Resume pending receipts with puppeteer_result rather than repeating an operation.",
     parameters: { type: "object", additionalProperties: false, required: ["action"], properties: {
-      action: { type: "string", enum: ["install", "inspect", "groups", "share", "stop"] },
-      target: { type: "string", description: "Required only for share: an exact native ID returned by inspect, selected by the owner." },
+      action: { type: "string", enum: ["install", "inspect", "groups", "demo", "share", "stop"] },
+      target: { type: "string", description: "Required for share. Optional for demo only when the owner chooses among several Bosses. Use native IDs internally, never ask the owner to copy them." },
       project: { type: "string", description: "Optional for parallel share: exact existing Claude/Codex project session ID from inspect, selected by the owner." },
       workers: { type: "integer", minimum: 1, maximum: 8, description: "Parallel native worker limit. Requires project; default 4." },
-      group: { type: "string", description: "Optional only for share: a chat UID returned by groups, selected by the owner. Omit to share only with this owner DM." },
+      group: { type: "string", description: "Required for demo: the group UID from plow_start_thread or groups. Optional for share; omit to share only with the owner DM." },
     } },
     async execute(id, args, signal) {
       try {

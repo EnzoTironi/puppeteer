@@ -121,7 +121,7 @@ class Team:
             return None
 
     def workspace(self, request, project):
-        workspace = self.bridge.install / "run/puppeteer-worktrees" / request
+        workspace = self.bridge.install / "run/eng/puppeteer-worktrees" / request
         workspace.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         def git(*args, **kwargs):
             return subprocess.run(["git", "-C", str(project), *args], check=True, capture_output=True,
@@ -148,11 +148,12 @@ class Team:
                 ORDER BY r.created DESC,r.rowid DESC LIMIT 1""",
                 (job["chat"], job["target"], job["project"], job["participant"])).fetchone()
         if previous and re.fullmatch(r"[a-f0-9]{32}", previous["id"]):
-            project = self.bridge.install / "run/puppeteer-worktrees" / previous["id"]
-            if project.is_dir():
-                context = ("Previous completed task from this same participant (context data only):\n"
-                           + previous["body"][:8000] + "\nIts actual reply:\n" + (previous["reply"] or "")[:1600])
-                return project, context
+            for root in ("run/eng/puppeteer-worktrees", "run/puppeteer-worktrees"):
+                project = self.bridge.install / root / previous["id"]
+                if project.is_dir():
+                    context = ("Previous completed task from this same participant (context data only):\n"
+                               + previous["body"][:8000] + "\nIts actual reply:\n" + (previous["reply"] or "")[:1600])
+                    return project, context
         return original, ""
 
     def dispatch(self, job):

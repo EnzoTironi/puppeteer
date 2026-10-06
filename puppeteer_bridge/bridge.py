@@ -132,11 +132,13 @@ class Bridge:
             roster = json.loads((self.install / "run/roster.json").read_text())
             if not isinstance(roster, dict):
                 raise ValueError()
+        except FileNotFoundError:
+            roster = {}
         except (OSError, ValueError):
             raise BridgeError("local_team_unavailable")
         rows = []
         for target, record in roster.items():
-            if not isinstance(record, dict) or not re.fullmatch(re.escape(self.cfg["HOST_ID"]) + r"/[A-Za-z0-9_-]+:[A-Za-z0-9_-]+", target):
+            if not isinstance(record, dict) or record.get("retired") or not re.fullmatch(re.escape(self.cfg["HOST_ID"]) + r"/[A-Za-z0-9_-]+:[A-Za-z0-9_-]+", target):
                 continue
             session, tab = target.split("/", 1)[1].split(":", 1)
             try:
@@ -146,6 +148,10 @@ class Bridge:
             rows.append({"target": target, "backend": record.get("backend", "claude"), "status": status,
                          "role": "boss" if record.get("is_master") else "agent"})
         return {"local_agents": rows}
+
+    def demo(self, group, target=None):
+        from .onboarding import prepare_demo
+        return prepare_demo(self, group, target, private_json)
 
     def pairing_path(self, request):
         if not re.fullmatch(r"[a-f0-9]{32}", request):
@@ -404,8 +410,9 @@ class Bridge:
             fcntl.flock(fd, fcntl.LOCK_EX)
             with self.ledger() as db:
                 rows = db.execute("""SELECT r.*,j.worker FROM requests r JOIN team_jobs j ON j.request=r.id
-                    WHERE r.target=? AND j.project=? AND r.chat IN (%s) AND r.status IN
-                    ('queued','dispatching','submitted','delivery_unknown','timed_out')""" % ",".join("?" for _ in config["chats"]),
+                    WHERE r.target=? AND j.project=? AND r.chat IN (%s) AND
+                    (r.status IN ('queued','dispatching','submitted','delivery_unknown','timed_out')
+                     OR r.status IN ('replied','not_ready','send_failed') AND j.closed=0 AND j.worker<>'')""" % ",".join("?" for _ in config["chats"]),
                     (config["agents"]["coder"], config["parallel"]["project"], *config["chats"])).fetchall()
             for row in rows:
                 if row["worker"]:
@@ -416,7 +423,7 @@ class Bridge:
                         uncertain += 1
                         continue
                 with self.ledger() as db:
-                    changed = db.execute("UPDATE requests SET status='cancelled' WHERE id=? AND status<>'replied'", (row["id"],)).rowcount
+                    changed = db.execute("UPDATE requests SET status='cancelled' WHERE id=? AND status IN ('queued','dispatching','submitted','delivery_unknown','timed_out')", (row["id"],)).rowcount
                     db.execute("UPDATE team_jobs SET closed=1,reply_key='' WHERE request=?", (row["id"],))
                 cancelled += changed
         finally:
@@ -515,6 +522,9 @@ def main(argv=None, cfg=None):
     configure.add_argument("--token-file", default="~/.config/plow/token")
     configure.add_argument("--api-base", default="https://api.plow.co")
     commands.add_parser("discover", help="Owner: list existing native coding sessions for onboarding")
+    demo = commands.add_parser("demo", help="Owner: prepare a group's Boss and fresh coding workspace")
+    demo.add_argument("--group", required=True)
+    demo.add_argument("--boss", help="Optional existing local Boss chosen by the owner")
     commands.add_parser("stop", help="Owner: pause the parallel demo, cancel waiting work and retire its workers")
     prepare = commands.add_parser("prepare", help="Owner: prepare a private pairing file")
     prepare.add_argument("--request", required=True)
@@ -557,6 +567,8 @@ def main(argv=None, cfg=None):
             value = bridge.configure(args.agent, args.chat, args.token_file, args.api_base)
         elif args.command == "discover":
             value = bridge.discover()
+        elif args.command == "demo":
+            value = bridge.demo(args.group, args.boss)
         elif args.command == "stop":
             value = bridge.stop()
         elif args.command == "prepare":
