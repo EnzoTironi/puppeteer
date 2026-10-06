@@ -24,10 +24,10 @@ import uuid
 def myplow_config_path():
     explicit = os.environ.get("MYPEOPLE_CONFIG_PATH")
     if explicit:
-        return Path(explicit).expanduser().resolve()
+        return Path(explicit).expanduser().absolute()
     home = os.environ.get("MYPEOPLE_HOME")
     if home:
-        return Path(home).expanduser().resolve() / "config" / "queue.env"
+        return Path(home).expanduser().absolute() / "config" / "queue.env"
     return Path.home() / ".config/mypeople/queue.env"
 
 
@@ -180,6 +180,9 @@ class Bridge:
             try:
                 with urllib.request.urlopen(request, timeout=15) as response:
                     payload = json.load(response)
+            except urllib.error.HTTPError as error:
+                error.close()
+                raise BridgeError("cannot_verify_plow_message")
             except (urllib.error.URLError, TimeoutError, ValueError):
                 raise BridgeError("cannot_verify_plow_message")
             rows = payload if isinstance(payload, list) else payload.get("messages", payload.get("data", [])) if isinstance(payload, dict) else None
