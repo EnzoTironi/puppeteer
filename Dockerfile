@@ -3,7 +3,7 @@ FROM public.ecr.aws/e1h7x4a2/plow-cloud-agents:base-9ba247396c05a695bb0c8abf228f
 ENV AGENT_ID=puppeteer \
     AGENT_NAME=Puppeteer \
     AGENT_RUNTIME=OpenClaw \
-    PUPPETEER_BRIDGE_COMMIT=534752a149e5eae9c74a39c85ab1e8aad660df43 \
+    PUPPETEER_BRIDGE_COMMIT=9b36df74e667fb12278ae121dccd61735f002da2 \
     PLOW_THREAD_TRUST=untrusted \
     PLOW_GUEST_TOOLS=puppeteer_agents,puppeteer_ask,puppeteer_result \
     AGENT_BLURB="Talk to the Claude Code and Codex agents already running on your Mac."
