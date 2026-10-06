@@ -211,6 +211,104 @@ class BridgeTest(unittest.TestCase):
             with self.assertRaisesRegex(BridgeError, "owner_terminal"):
                 self.bridge.configure(["coder=sam/main:coder"], ["cht_shared"], self.root / "token", "https://api.plow.co")
 
+    def test_plow_data_list_and_legacy_envelopes_are_accepted(self):
+        for payload in ({"data": self.messages, "has_more": False}, self.messages, {"messages": self.messages}):
+            with self.subTest(payload=type(payload).__name__):
+                type(self).payload = payload
+                self.assertEqual(self.bridge.source_message(self.bridge.config(), "cht_shared", "msg_original"), self.messages[0]["body"])
+
+    def test_burst_message_is_verified_from_older_page(self):
+        type(self).pages = {None: {"data": [{"uid": "msg_newer"}], "has_more": True},
+                            "msg_newer": {"data": self.messages, "has_more": False}}
+        self.assertEqual(self.ask()["status"], "submitted")
+        self.dispatch.assert_called_once()
+
+    def test_malformed_http_and_server_failures_never_dispatch(self):
+        for payload in (b"not json", {"data": {}}, None):
+            with self.subTest(payload=payload):
+                type(self).payload = payload
+                type(self).http_status = 503 if payload is None else 200
+                with self.assertRaisesRegex(BridgeError, "cannot_verify"):
+                    self.ask()
+        self.dispatch.assert_not_called()
+
+    def test_network_timeout_is_a_verification_failure(self):
+        with patch("puppeteer_bridge.bridge.urllib.request.urlopen", side_effect=TimeoutError()):
+            with self.assertRaisesRegex(BridgeError, "cannot_verify"):
+                self.ask()
+        self.dispatch.assert_not_called()
+
+    def test_login_missing_empty_or_invalid_never_dispatches(self):
+        for token in ("", "wrong-token", None):
+            with self.subTest(token=token):
+                path = self.root / "token"
+                if token is None:
+                    path.unlink()
+                else:
+                    path.write_text(token)
+                with self.assertRaises(BridgeError):
+                    self.ask()
+        self.dispatch.assert_not_called()
+
+    def test_local_runtime_missing_or_malformed_never_dispatches(self):
+        for roster in ([], {}, None):
+            with self.subTest(roster=roster):
+                path = self.root / "run/roster.json"
+                if roster is None:
+                    path.unlink()
+                else:
+                    path.write_text(json.dumps(roster))
+                with self.assertRaisesRegex(BridgeError, "local_(team|agent)_unavailable"):
+                    self.ask()
+        self.dispatch.assert_not_called()
+
+    def test_send_failure_is_retained_without_replay(self):
+        self.dispatch.return_value = subprocess.CompletedProcess([], 1, "", "failed")
+        receipt = self.ask()
+        self.assertEqual(receipt["status"], "send_failed")
+        self.assertEqual(self.ask(), receipt)
+        self.dispatch.assert_called_once()
+        with self.assertRaisesRegex(BridgeError, "not_awaiting_reply"):
+            self.bridge.reply(receipt["request"], "late reply", self.reply_key())
+
+    def test_future_long_and_unknown_sender_messages_are_refused(self):
+        original = dict(self.messages[0])
+        variants = [{"created_at": (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=2)).isoformat()},
+                    {"created_at": datetime.datetime.now().isoformat()}, {"body": "x" * 8001},
+                    {"sender": {"type": "unknown"}}, {"body": "   "}]
+        for change in variants:
+            with self.subTest(change=list(change)):
+                self.messages[:] = [dict(original, **change)]
+                with self.assertRaises(BridgeError):
+                    self.ask()
+        self.dispatch.assert_not_called()
+
+    def test_same_source_cannot_be_redirected_to_another_shared_agent(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.bridge.configure(["coder=sam/main:coder", "other=sam/main:private"], ["cht_shared"], self.root / "token",
+                                  "http://127.0.0.1:" + str(self.server.server_port))
+        self.ask()
+        with self.assertRaisesRegex(BridgeError, "already_routed"):
+            self.bridge.ask("cht_shared", "msg_original", "other")
+        self.dispatch.assert_called_once()
+
+    def test_concurrent_identical_replies_are_idempotent(self):
+        receipt = self.ask()
+        key = self.reply_key()
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            replies = list(executor.map(lambda _: self.bridge.reply(receipt["request"], "answer", key), range(4)))
+        self.assertEqual(len({json.dumps(r) for r in replies}), 1)
+        self.assertEqual(self.bridge.result("cht_shared", receipt["request"])["reply"], "answer")
+
+    def test_bad_configuration_and_unsafe_endpoint_are_refused(self):
+        for endpoint in ("http://example.com", "https://user:pass@example.com", "https://api.plow.co?token=x"):
+            with self.subTest(endpoint=endpoint), self.assertRaisesRegex(BridgeError, "https"):
+                self.bridge.configure(["coder=sam/main:coder"], ["cht_shared"], self.root / "token", endpoint)
+        self.bridge.config_path.write_text("not json")
+        with self.assertRaisesRegex(BridgeError, "not_configured"):
+            self.ask()
+        self.dispatch.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
