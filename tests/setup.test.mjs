@@ -56,6 +56,32 @@ test('owner installation is fixed, pinned and resumes the original approval',asy
  assert.equal((await requests.result(owner,receipt.request)).installed,true);
  assert.deepEqual(wire.map(r=>r.name),['plow_run_command','plow_get_result']);
 });
+test('a cold installation keeps polling the original job when running output omits its handle, including after restart',async()=>{
+ responses.push({status:'running',handle:'install-job',output:'start',output_length:5},
+  {status:'running',output:' more',output_length:10},
+  {status:'completed',exit_code:0,output:' done',output_length:15});
+ const receipt=await requests.setup(owner,{action:'install'});
+ assert.equal(receipt.status,'running');
+ requests=new Requests(new Latch('latch-only-token',base+'/mcp'),directory,undefined,new Plow(base,'cloud-only-token'));
+ const pending=await requests.result(owner,receipt.request);
+ assert.equal(pending.status,'running'); assert.equal(pending.error,undefined);
+ assert.equal((await requests.result(owner,receipt.request)).installed,true);
+ assert.deepEqual(wire.map(r=>r.name),['plow_run_command','plow_get_output','plow_get_output']);
+ assert.deepEqual(wire.slice(1).map(r=>r.arguments),[{handle:'install-job',since:5},{handle:'install-job',since:10}]);
+});
+test('a streamed coding-agent listing assembles incremental output while running polls omit the handle',async()=>{
+ const chunks=['{"agents":[','{"alias":"coder","backend":"codex","status":"idle"}',']}\n'];
+ const size=i=>Buffer.byteLength(chunks.slice(0,i+1).join(''));
+ responses.push({status:'running',handle:'agents-job',output:chunks[0],output_length:size(0)},
+  {status:'running',output:chunks[1],output_length:size(1)},
+  {status:'completed',exit_code:0,output:chunks[2],output_length:size(2)});
+ const receipt=await requests.agents(guest);
+ assert.equal(receipt.status,'running');
+ assert.equal((await requests.result(guest,receipt.request)).status,'running');
+ assert.deepEqual((await requests.result(guest,receipt.request)).agents,[{alias:'coder',backend:'codex',status:'idle'}]);
+ assert.deepEqual(wire.map(r=>r.name),['plow_run_command','plow_get_output','plow_get_output']);
+ assert.deepEqual(wire.slice(1).map(r=>r.arguments),[{handle:'agents-job',since:size(0)},{handle:'agents-job',since:size(1)}]);
+});
 test('a turn that expires during source verification cannot start a Mac operation',async()=>{
  await assert.rejects(requests.setup({...owner,assertCurrent(){throw new Error('turn_expired');}},{action:'install'}),/turn_expired/);
  await assert.rejects(requests.ask({...guest,assertCurrent(){throw new Error('turn_expired');}},'coder'),/turn_expired/);

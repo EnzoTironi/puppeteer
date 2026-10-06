@@ -111,13 +111,18 @@ export class Requests {
     }
   }
 
-  private settle(payload: Record<string, unknown>, op: Operation, previousOutput = ""): Stage {
+  private settle(payload: Record<string, unknown>, op: Operation, previous?: Extract<Stage, { kind: "running" }>): Stage {
+    const previousOutput = previous?.output ?? "";
     if (payload.status === "pending" && typeof payload.handle === "string") return { kind: "pending", handle: payload.handle, reason: typeof payload.reason === "string" ? payload.reason : "running" };
-    if (payload.status === "ready" && object(payload.result)) return this.settle(payload.result, op);
-    if (payload.status === "running" && typeof payload.handle === "string") return {
-      kind: "running", handle: payload.handle, output: previousOutput + (typeof payload.output === "string" ? payload.output : typeof payload.stdout === "string" ? payload.stdout : ""),
-      offset: typeof payload.output_length === "number" ? payload.output_length : 0,
-    };
+    if (payload.status === "ready" && object(payload.result)) return this.settle(payload.result, op, previous);
+    if (payload.status === "running") {
+      const handle = typeof payload.handle === "string" ? payload.handle : previous?.handle;
+      if (!handle) throw new Error("latch_command_handle_missing");
+      return {
+        kind: "running", handle, output: previousOutput + (typeof payload.output === "string" ? payload.output : typeof payload.stdout === "string" ? payload.stdout : ""),
+        offset: typeof payload.output_length === "number" ? payload.output_length : previous?.offset ?? 0,
+      };
+    }
     if (["denied", "blocked", "failed", "error", "expired", "unknown"].includes(String(payload.status))) return { kind: "done", value: {
       error: `latch_${payload.status}`, ...(object(payload.diagnosis) && typeof payload.diagnosis.owner_action === "string" ? { owner_action: payload.diagnosis.owner_action } : {}),
     } };
@@ -265,7 +270,7 @@ export class Requests {
       op.guard?.();
       try {
         if (stage.kind === "pending") op.stage = this.settle(await this.latch.call("plow_get_result", { handle: stage.handle }, signal), op);
-        else if (stage.kind === "running") op.stage = this.settle(await this.latch.call("plow_get_output", { handle: stage.handle, since: stage.offset }, signal), op, stage.output);
+        else if (stage.kind === "running") op.stage = this.settle(await this.latch.call("plow_get_output", { handle: stage.handle, since: stage.offset }, signal), op, stage);
         else if (stage.kind === "done" && typeof stage.value.request === "string") {
           await this.command(id, op, ["result", stage.value.request, "--chat", turn.chat, "--wait", String(wait)], signal);
         }
