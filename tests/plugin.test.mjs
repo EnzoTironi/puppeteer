@@ -78,7 +78,8 @@ test('approval and job handles stay private, polling resumes instead of replayin
  const answer=await requests.result(turn,receipt.request);
  assert.equal(answer.reply,'Fixed. Test passed.');
  assert.deepEqual(wire.map(r=>r.body.params.name),['plow_run_command','plow_get_result','plow_get_output','plow_run_command']);
- assert.deepEqual(wire[3].body.params.arguments.argv,['puppeteer-bridge','result',localReceipt.request,'--chat','cht_shared','--wait','15']);
+ assert.deepEqual(wire[3].body.params.arguments.argv,['puppeteer-bridge','result',localReceipt.request,'--chat','cht_shared','--wait','8']);
+ assert.equal(wire[3].body.params.arguments.wait_ms,9000);
  assert.ok(!JSON.stringify(answer).includes('approval'));
 });
 test('other chats cannot read even a valid operation receipt', async () => {

@@ -12,4 +12,5 @@ runtime without modifying MyPlow or depending on its Python package.
 
 Puppeteer's connector, guest tools, source customization script, persona
 additions and skill are MIT licensed. The image's customized Plow channel,
-transport, configuration and MCP bridge retain the upstream Apache-2.0 license.
+transport, configuration, plugin manifest and MCP bridge retain the upstream
+Apache-2.0 license.

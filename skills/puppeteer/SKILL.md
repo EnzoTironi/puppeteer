@@ -28,7 +28,10 @@ request needs no new coding task. A submission is not a completed answer.
 For `awaiting_approval`, tell the participant the Mac owner must approve the
 bridge operation in Latch. For `pending` or `running`, keep polling the same
 receipt with a few seconds between calls. For `submitted` or `dispatching`,
-continue with `puppeteer_result` until `replied` or a terminal failure. Requests
+continue with `puppeteer_result` until `replied` or a terminal failure. Result
+calls wait briefly; keep polling for at least one minute before returning a
+pending status. `submitted` means MyPlow accepted the task, not that approval
+is missing. Only `awaiting_approval` asks the Mac owner to approve. Requests
 expire after 15 minutes. An interrupted turn can resume its receipt through
 another `/prompt status …` in that same conversation.
 

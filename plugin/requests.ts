@@ -148,7 +148,7 @@ export class Requests {
       argv: ["puppeteer-bridge", ...argv], network: argv[0] === "ask", read_paths: this.paths.read,
       ...(argv[0] !== "agents" && argv[0] !== "discover" ? { write_paths: [...this.paths.write,
         ...(["prepare", "pair"].includes(argv[0] ?? "") ? ["~/.config/puppeteer"] : [])] } : {}),
-      wait_ms: 1000, goal: `Puppeteer: ${argv[0]} in approved conversation ${op.chat}`,
+      wait_ms: argv[0] === "result" ? 9000 : 1000, goal: `Puppeteer: ${argv[0]} in approved conversation ${op.chat}`,
     }, signal);
   }
 
@@ -215,7 +215,7 @@ export class Requests {
         previous.guard = turn.assertCurrent;
         if (previous.action.kind !== "ask" || previous.action.alias !== alias) throw new Error("source_message_already_routed_to_another_agent");
         if (previous.stage.kind === "done" && typeof previous.stage.value.request === "string") {
-          await this.command(id, previous, ["result", previous.stage.value.request, "--chat", turn.chat, "--wait", "15"], signal);
+          await this.command(id, previous, ["result", previous.stage.value.request, "--chat", turn.chat, "--wait", "8"], signal);
         }
         return this.view(id, previous);
       }
@@ -244,7 +244,7 @@ export class Requests {
         if (stage.kind === "pending") op.stage = this.settle(await this.latch.call("plow_get_result", { handle: stage.handle }, signal), op);
         else if (stage.kind === "running") op.stage = this.settle(await this.latch.call("plow_get_output", { handle: stage.handle, since: stage.offset }, signal), op, stage.output);
         else if (stage.kind === "done" && typeof stage.value.request === "string") {
-          await this.command(id, op, ["result", stage.value.request, "--chat", turn.chat, "--wait", "15"], signal);
+          await this.command(id, op, ["result", stage.value.request, "--chat", turn.chat, "--wait", "8"], signal);
         }
       } catch { return { request: id, status: "pending", error: "latch_poll_failed" }; }
       await this.save(id, op);
