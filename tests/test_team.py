@@ -253,6 +253,20 @@ class TeamTest(unittest.TestCase):
             self.assertEqual(self.bridge.stop(), {"paused": True, "cancelled": 0, "uncertain": 1})
         self.assertEqual(self.bridge.result("cht_group", receipt["request"])["status"], "submitted")
 
+    def test_a_reply_arriving_during_stop_is_preserved_and_not_counted_as_cancelled(self):
+        receipt = self.ask(1)
+        job = self.team.claim()
+        with patch.object(self.team, "ready", return_value=True):
+            self.team.dispatch(job)
+        def completed_during_stop(worker, reason):
+            self.complete(receipt["request"], "Completed before cancellation")
+            return True
+        with patch.object(Team, "retire", side_effect=completed_during_stop):
+            self.assertEqual(self.bridge.stop(), {"paused": True, "cancelled": 0, "uncertain": 0})
+        result = self.bridge.result("cht_group", receipt["request"])
+        self.assertEqual(result["status"], "replied")
+        self.assertEqual(result["reply"], "Completed before cancellation")
+
 
 class ReadinessTest(unittest.TestCase):
     def test_trust_screen_is_not_a_composer_and_never_receives_a_task(self):

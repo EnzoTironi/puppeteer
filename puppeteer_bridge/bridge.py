@@ -416,9 +416,9 @@ class Bridge:
                         uncertain += 1
                         continue
                 with self.ledger() as db:
-                    db.execute("UPDATE requests SET status='cancelled' WHERE id=? AND status<>'replied'", (row["id"],))
+                    changed = db.execute("UPDATE requests SET status='cancelled' WHERE id=? AND status<>'replied'", (row["id"],)).rowcount
                     db.execute("UPDATE team_jobs SET closed=1,reply_key='' WHERE request=?", (row["id"],))
-                cancelled += 1
+                cancelled += changed
         finally:
             os.close(fd)
         return {"paused": True, "cancelled": cancelled, "uncertain": uncertain}
