@@ -69,7 +69,7 @@ cloud environment, with the selected runtime directory included for writes.
 The original terminal path remains available for custom deployments:
 
 ```sh
-uv tool install 'git+https://github.com/EnzoTironi/puppeteer.git@9b36df74e667fb12278ae121dccd61735f002da2'
+uv tool install 'git+https://github.com/EnzoTironi/puppeteer.git@903930c9971c592f1d2ccf61c4b8f394dd542495'
 plow-agents login
 puppeteer-bridge configure \
   --agent coder=sams-mac/main:eng-codex \
