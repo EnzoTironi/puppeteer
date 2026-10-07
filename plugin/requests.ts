@@ -1,57 +1,26 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Latch, object } from "./latch.ts";
 import { Plow } from "./plow.ts";
 import { promptCommand } from "./replies.ts";
+import { readJson, withLock, writeJson } from "./store.ts";
+import { setupStatus } from "./setup.ts";
+import { parseOperation, type Action, type Stage, type Operation } from "./operations.ts";
 
 export type Turn = { chat: string; message: string; session: string; prompt: string; sender?: string; background?: boolean; owner?: boolean; assertCurrent?: () => void; recordReply?: (result: Record<string, unknown>) => void };
-export type Setup = { action: "install" | "inspect" | "groups" | "stop" } | { action: "demo"; group: string; target?: string }
+export type Setup = { action: "install" | "inspect" | "groups" | "stop" | "resume" | "status" } | { action: "demo"; group: string; target?: string }
   | { action: "share"; target: string; group?: string; project?: string; workers?: number };
-type Action = { kind: "agents" } | { kind: "ask"; alias: string } | { kind: "install" } | { kind: "inspect" } | { kind: "stop" }
-  | { kind: "demo"; group: string; target?: string }
-  | { kind: "share"; target: string; chats: string[]; group?: string; project?: string; workers?: number; phase: "prepare" | "write" | "pair" };
-type Stage =
-  | { kind: "unknown"; error: string }
-  | { kind: "pending"; handle: string; reason: string }
-  | { kind: "running"; handle: string; output: string; offset: number }
-  | { kind: "done"; value: Record<string, unknown> };
-type Operation = { chat: string; message: string; created: number; action: Action; stage: Stage; guard?: () => void };
-
-function parseOperation(value: unknown): Operation {
-  if (!object(value) || typeof value.chat !== "string" || typeof value.message !== "string" || typeof value.created !== "number" || !object(value.action) || !object(value.stage)) throw new Error("invalid_request_state");
-  let action: Action;
-  if (value.action.kind === "agents") action = { kind: "agents" };
-  else if (value.action.kind === "ask" && typeof value.action.alias === "string") action = { kind: "ask", alias: value.action.alias };
-  else if (value.action.kind === "install" || value.action.kind === "inspect" || value.action.kind === "stop") action = { kind: value.action.kind };
-  else if (value.action.kind === "demo" && typeof value.action.group === "string"
-    && (value.action.target === undefined || typeof value.action.target === "string")) {
-    action = { kind: "demo", group: value.action.group, target: value.action.target };
-  }
-  else if (value.action.kind === "share" && typeof value.action.target === "string" && Array.isArray(value.action.chats)
-    && value.action.chats.every(c => typeof c === "string") && (value.action.group === undefined || typeof value.action.group === "string")
-    && ["prepare", "write", "pair"].includes(String(value.action.phase))) {
-    const phase = value.action.phase;
-    if (phase !== "prepare" && phase !== "write" && phase !== "pair") throw new Error("invalid_request_state");
-    action = { kind: "share", target: value.action.target, chats: value.action.chats, group: value.action.group, phase,
-      ...(typeof value.action.project === "string" ? { project: value.action.project, workers: typeof value.action.workers === "number" ? value.action.workers : 4 } : {}) };
-  }
-  else throw new Error("invalid_request_state");
-  let stage: Stage;
-  const s = value.stage;
-  if (s.kind === "unknown" && typeof s.error === "string") stage = { kind: s.kind, error: s.error };
-  else if (s.kind === "pending" && typeof s.handle === "string" && typeof s.reason === "string") stage = { kind: s.kind, handle: s.handle, reason: s.reason };
-  else if (s.kind === "running" && typeof s.handle === "string" && typeof s.output === "string" && typeof s.offset === "number") stage = { kind: s.kind, handle: s.handle, output: s.output, offset: s.offset };
-  else if (s.kind === "done" && object(s.value)) stage = { kind: s.kind, value: s.value };
-  else throw new Error("invalid_request_state");
-  return { chat: value.chat, message: value.message, created: value.created, action, stage };
-}
 
 function bridgeValue(stdout: string): Record<string, unknown> {
   const line = stdout.trim().split("\n").at(-1);
   const value: unknown = JSON.parse(line ?? "null");
   if (!object(value)) throw new Error("invalid_bridge_response");
   if (typeof value.error === "string") return { error: value.error };
+  if (value.connection_checked === true && typeof value.configured === "boolean" && typeof value.paused === "boolean") {
+    return { connection_checked: true, configured: value.configured, paused: value.paused };
+  }
+  if (value.resumed === true) return { resumed: true };
   if (value.paused === true && typeof value.cancelled === "number" && typeof value.uncertain === "number") return { paused: true, cancelled: value.cancelled, uncertain: value.uncertain };
   if (value.pairing_prepared === true) return { pairing_prepared: true };
   if (value.configured === true && Array.isArray(value.chats) && value.chats.every(c => typeof c === "string")) return { configured: true, agents: ["coder"], chats: value.chats };
@@ -95,22 +64,26 @@ export class Requests {
 
   private async exclusive<T>(id: string, work: () => Promise<T>): Promise<T> {
     const previous = this.locks.get(id) ?? Promise.resolve();
-    const current = previous.catch(() => undefined).then(work);
+    const current = previous.catch(() => undefined).then(() => withLock(join(this.directory, id + ".json"), work));
     this.locks.set(id, current);
     try { return await current; } finally { if (this.locks.get(id) === current) this.locks.delete(id); }
   }
 
   private async read(id: string): Promise<Operation | undefined> {
-    try { return parseOperation(JSON.parse(await readFile(join(this.directory, id + ".json"), "utf8"))); }
-    catch (error) { if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined; throw error; }
+    const value = await readJson(join(this.directory, id + ".json"));
+    return value === undefined ? undefined : parseOperation(value);
   }
 
   private async save(id: string, op: Operation): Promise<void> {
-    await mkdir(this.directory, { recursive: true, mode: 0o700 });
-    const path = join(this.directory, id + ".json");
-    const temporary = path + "." + randomUUID() + ".tmp";
-    await writeFile(temporary, JSON.stringify(op), { mode: 0o600 });
-    await rename(temporary, path);
+    if (op.completed === undefined && op.stage.kind === "done" && !op.stage.value.error
+      && (["install", "inspect", "stop", "resume"].includes(op.action.kind) || (op.action.kind === "share" && op.action.phase === "pair"))) op.completed = Date.now();
+    await writeJson(join(this.directory, id + ".json"), op);
+  }
+
+  async shared(chat: string): Promise<void> {
+    const state = await setupStatus(this.directory);
+    if (state.status === "PAUSED") throw new Error("demo_paused");
+    if (state.status !== "CONFIGURED" || !state.chats.includes(chat)) throw new Error("chat_not_shared");
   }
 
   private view(id: string, op: Operation): Record<string, unknown> {
@@ -167,8 +140,8 @@ export class Requests {
   private async command(id: string, op: Operation, argv: string[], signal?: AbortSignal): Promise<void> {
     await this.send(id, op, "plow_run_command", {
       argv: ["puppeteer-bridge", ...argv], network: argv[0] === "ask" || argv[0] === "demo" || argv[0] === "stop", read_paths: this.paths.read,
-      ...(argv[0] !== "agents" && argv[0] !== "discover" ? { write_paths: [...this.paths.write,
-        ...(["prepare", "pair", "stop"].includes(argv[0] ?? "") ? ["~/.config/puppeteer"] : [])] } : {}),
+      ...(!["agents", "discover", "status"].includes(argv[0] ?? "") ? { write_paths: [...this.paths.write,
+        ...(["prepare", "pair", "stop", "resume"].includes(argv[0] ?? "") ? ["~/.config/puppeteer"] : [])] } : {}),
       wait_ms: argv[0] === "result" ? 9000 : 1000, goal: `Puppeteer: ${argv[0]} in approved conversation ${op.chat}`,
     }, signal);
   }
@@ -208,7 +181,8 @@ export class Requests {
       }
       const action: Action = input.action === "share" ? { kind: "share", target: input.target, group: input.group, project: input.project, workers: input.project ? input.workers ?? 4 : undefined, chats, phase: "prepare" }
         : input.action === "demo" ? { kind: "demo", group: input.group, target: input.target }
-          : input.action === "install" ? { kind: "install" } : input.action === "stop" ? { kind: "stop" } : { kind: "inspect" };
+          : input.action === "install" ? { kind: "install" } : input.action === "stop" ? { kind: "stop" }
+            : input.action === "resume" ? { kind: "resume" } : input.action === "status" ? { kind: "status" } : { kind: "inspect" };
       const op: Operation = { chat: turn.chat, message: turn.message, created: Date.now(), action, stage: { kind: "unknown", error: "not_started" }, guard: turn.assertCurrent };
       if (input.action === "install") {
         const commit = process.env.PUPPETEER_BRIDGE_COMMIT;
@@ -219,6 +193,7 @@ export class Requests {
           goal: "Puppeteer: install the pinned MIT MyPlow connector requested by the owner",
         }, signal);
       } else await this.command(id, op, input.action === "inspect" ? ["discover"] : input.action === "stop" ? ["stop"]
+        : input.action === "resume" ? ["resume"] : input.action === "status" ? ["status"]
         : input.action === "demo" ? ["demo", "--group", input.group, ...(input.target ? ["--boss", input.target] : [])]
           : ["prepare", "--request", id], signal);
       await this.advance(id, op, signal);
@@ -278,7 +253,7 @@ export class Requests {
       const op = await this.read(id);
       if (!op || op.chat !== turn.chat) throw new Error("request_not_shared");
       op.guard = turn.assertCurrent;
-      if (["install", "inspect", "share", "stop", "demo"].includes(op.action.kind)) {
+      if (["install", "inspect", "share", "stop", "demo", "resume", "status"].includes(op.action.kind)) {
         if (!this.plow) throw new Error("owner_setup_unavailable");
         await this.plow.owner(turn, signal);
         if (op.action.kind === "share" || op.action.kind === "demo") await this.plow.share(turn, op.action.group, signal);

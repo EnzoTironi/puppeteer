@@ -1,0 +1,8 @@
+{
+  "id": "puppeteer",
+  "name": "Puppeteer",
+  "description": "Shared coding tools, owner setup gate and private question handoffs.",
+  "contracts": { "tools": ["puppeteer_agents", "puppeteer_ask", "puppeteer_result", "puppeteer_setup", "puppeteer_setup_status", "puppeteer_ask_owner", "puppeteer_answer_owner"] },
+  "activation": { "onStartup": true },
+  "configSchema": { "type": "object", "additionalProperties": false }
+}

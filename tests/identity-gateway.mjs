@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { renderConfig, syncConfig } from '/opt/plow/boot/config.js';
 import { renderPrompt } from '/opt/plow/boot/prompt.js';
 import { startGateway } from '/opt/plow/boot/process.js';
+import { applyGate, installGate } from '/opt/puppeteer/boot/gate.ts';
 
 const { WebSocketServer } = createRequire('/opt/plow/plugin/package.json')('ws');
 const root = await mkdtemp(join(tmpdir(), 'puppeteer-identity-'));
@@ -42,6 +43,12 @@ async function handle(req, res) {
   if (url.pathname.endsWith('/chat/completions')) {
     modelCalls++;
     const system = body.messages.filter(message => message.role === 'system').map(message => typeof message.content === 'string' ? message.content : JSON.stringify(message.content)).join('\n');
+    // The SDK adds a separate internal-context user block after the active prompt.
+    const current = body.messages.filter(message => message.role === 'user').map(message =>
+      typeof message.content === 'string' ? message.content : JSON.stringify(message.content));
+    assert.ok(current.some(prompt => prompt.includes(cases[results.length])
+      && prompt.includes('Puppeteer setup status was checked for this owner DM.')),
+    'The fresh setup gate must accompany the current owner message on every real model request');
     assert.ok(system.includes('Your name is Puppeteer.'), 'The shipped persona must reach the real model request');
     assert.ok(system.includes('Reply exclusively in English.'), 'The shipped SOUL persona must reach the model request');
     const text = JSON.stringify(body.messages).replaceAll('\\', '');
@@ -60,7 +67,7 @@ async function handle(req, res) {
     res.write('data: ' + JSON.stringify(chunk) + '\n\n');
     res.end('data: ' + JSON.stringify({ ...chunk, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }) + '\n\ndata: [DONE]\n\n'); return;
   }
-  if (url.pathname === '/v1/agents/me') return json({ agent: { name: 'Alder' }, line: { uid: 'ln_alder' } });
+  if (url.pathname === '/v1/agents/me') return json({ agent: { name: 'Alder' }, line: { uid: 'ln_alder' }, chats:[chat] });
   if (url.pathname === '/v1/chats') return json({ data: [chat], has_more: false });
   if (url.pathname === '/v1/chats/' + chat.uid) return json(chat);
   if (url.pathname === '/v1/ws/ticket') return json({ ticket: 'fixture-ticket' });
@@ -91,7 +98,9 @@ await writeFile(join(config.agents.defaults.workspace, 'SOUL.md'), await readFil
 await writeFile(join(config.agents.defaults.workspace, 'AGENTS.md'), await renderPrompt(await readFile('/opt/plow/prompt/AGENTS.md', 'utf8'), null, 'fixture-token', 'untrusted'));
 const staleConfig = structuredClone(config);
 staleConfig.agents.entries.main.identity.name = 'Alder';
-await writeFile(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify(staleConfig));
+applyGate(staleConfig);await writeFile(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify(staleConfig));
+await installGate('/opt/puppeteer/plugin',join(root,'extensions/puppeteer'));applyGate(config);
+config.tools.alsoAllow.push('puppeteer_setup','puppeteer_setup_status','puppeteer_answer_owner');
 await syncConfig(config, process.env.OPENCLAW_CONFIG_PATH, process.env.OPENCLAW_INCLUDE_ROOTS);
 assert.equal(JSON.parse(await readFile(join(root, 'includes/identity.json5'), 'utf8')).name, 'Puppeteer');
 child = await startGateway(true);
@@ -106,14 +115,14 @@ try {
     assert.match(result.response, /Puppeteer/);
     assert.doesNotMatch(result.response, /I(?:'m| am) Alder|Puppeteer is a separate|\b(?:Não|sou|seu|você|posso|Você)\b/i);
   }
-  const proof = { type: 'real OpenClaw gateway; simulated iMessage transport; ' + (process.env.PUPPETEER_IDENTITY_MODEL_URL ? 'live Plow GLM model' : 'fixture model'), apiName: 'Alder', configuredName: config.agents.entries.main.identity.name, staleConfigReplaced: true, previousWrongReplyIncluded: true, modelCalls, externalDelivery: false, results };
+  const proof = { type: 'real OpenClaw gateway; simulated iMessage transport; ' + (process.env.PUPPETEER_IDENTITY_MODEL_URL ? 'live Plow GLM model' : 'fixture model'), apiName: 'Alder', configuredName: config.agents.entries.main.identity.name, staleConfigReplaced: true, previousWrongReplyIncluded: true, freshSetupGateOnEveryOwnerPrompt: true, modelCalls, externalDelivery: false, results };
   if (process.env.PUPPETEER_IDENTITY_EVIDENCE) await writeFile(process.env.PUPPETEER_IDENTITY_EVIDENCE, JSON.stringify(proof, null, 2) + '\n');
   console.log('IDENTITY_GATEWAY_OK ' + JSON.stringify(proof));
 } catch (error) { console.error(error); console.error(log.slice(-3500)); process.exitCode = 1; }
 finally {
   clearTimeout(timeout); child.kill('SIGTERM');
   const forceStop = setTimeout(() => child.kill('SIGKILL'), 5000);
-  await new Promise(resolve => { if (child.exitCode !== null) return resolve(); child.once('exit', resolve); });
+  await new Promise(resolve => { if (child.exitCode !== null || child.signalCode !== null) return resolve(); child.once('exit', resolve); });
   clearTimeout(forceStop);
   for (const socket of sockets.clients) socket.terminate();
   await new Promise(resolve => sockets.close(resolve)); await new Promise(resolve => server.close(resolve));

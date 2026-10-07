@@ -39,15 +39,16 @@ Set up Puppeteer on my Mac.
 
 Puppeteer installs its pinned MIT connector through Latch and checks your Mac.
 It offers to create an iMessage group and use your existing MyPlow Boss. If it
-finds no Boss, it creates one for the group. Give it the first participant's
-iMessage phone number or email. It creates the group, prepares a fresh coding
+finds no Boss, it creates one for the group. Name the first participant. It looks up an exact Contacts match when available
+and asks for an iMessage phone number or email only when that address cannot
+be verified. It creates the group, prepares a fresh coding
 workspace with a Git commit and a passing test, and connects four parallel
 workers. You can add more people in iMessage.
 
 For example, when an existing Boss is found:
 
 > I found your MyPlow Boss. I can create an iMessage group and a fresh coding
-> workspace for it. Who should I add first? Send their phone number or iMessage email.
+> workspace for it. Who should I add first?
 
 You do not need to copy technical IDs, prepare a demo repo or choose a worker
 count. If you want an existing group or project, tell Puppeteer its name instead.
@@ -64,7 +65,7 @@ to arbitrary Codex desktop tabs or unmanaged terminals.
 
 Setup is restricted to the authenticated owner's main private DM. In every
 phone group, including trusted groups and the owner's turns, only the three
-narrow coding tools are available. The owner chooses the session and group;
+narrow coding tools and the scoped private owner-question tool are available. The owner chooses the session and group;
 the model cannot supply commands, paths, credentials, or replacement prompts.
 The default audience setup creates a fresh coding project.
 
@@ -84,7 +85,7 @@ cloud environment, with the selected runtime directory included for writes.
 The original terminal path remains available for custom deployments:
 
 ```sh
-uv tool install 'git+https://github.com/EnzoTironi/puppeteer.git@753db8d94a7552cdebde6de578c4a919c550f11c'
+uv tool install 'git+https://github.com/EnzoTironi/puppeteer.git@6375e8021e6362ad7a7938cfff9d7e8e39c0c67f'
 plow-agents login
 puppeteer-bridge configure \
   --agent coder=sams-mac/main:eng-codex \
@@ -206,7 +207,8 @@ the connector does not replace them while execution may still be running.
 The owner can privately say "Stop the parallel demo." The owner-only stop tool
 pauses new requests, cancels queued work and retires only that demo's workers.
 It reports any stop it could not confirm. Worktrees stay available for review.
-Sharing again explicitly resumes the demo. Native trust or login screens
+An explicit private resume keeps the same group, grants and workspace without
+replaying cancelled or uncertain requests. Native trust or login screens
 produce a not-ready response; Puppeteer never pastes a task into those screens.
 
 The channel keeps 4,096 handled IDs in its persistent checkpoint. Ordinary
@@ -222,12 +224,31 @@ the audience. [Apple's group-message guidance](https://support.apple.com/en-us/1
 explains the difference. A 100-participant simulated Plow group test does not
 prove that 100 physical iMessage participants are supported.
 
+## Private questions and simpler recovery
+
+A participant can ask `/prompt ask owner Which file should we change?` in the
+shared group. Puppeteer forwards only that current question to the verified
+owner privately and stays silent in the group about the handoff. One question
+can be pending per group for 48 hours. The owner's explicit current answer
+returns to that original still-shared group once. It does not grant additional
+permissions, run code or disclose private Mac results.
+
+The owner can privately ask "Check my Mac connection", "Pause the demo", or
+"Resume the demo". A live connection check is read-only. Pause cancels queued
+work and retires this demo's workers while preserving worktrees; resume keeps
+the group and grants without restarting cancelled or uncertain tasks.
+
+For an existing deployment, ask privately to "Upgrade the Mac connector" before
+using the new connection-check and resume commands. The pinned connector upgrade
+preserves pairing and the workspace. A cloud-image update alone does not update
+software installed on the Mac.
+
 ## Run the cloud agent locally
 
-Clone the agent branch, then run it with Docker and `plow-agents` installed:
+Clone the repository, then run it with Docker and `plow-agents` installed:
 
 ```sh
-git clone --branch feat/openclaw-agent https://github.com/EnzoTironi/puppeteer.git
+git clone https://github.com/EnzoTironi/puppeteer.git
 cd puppeteer
 ```
 
@@ -331,10 +352,27 @@ its existing project access, so choose an appropriate agent and project.
 The connector is a standalone Python package with no MyPlow package dependency.
 It reads the native MyPlow `queue.env`, roster and status files, and calls the
 installed runtime's `bin/mp`. It does not patch MyPlow or use its private Python API.
-The cloud image inherits Plow's OpenClaw boot and Agent Index reporter. It
-adds three audience tools and one owner-only setup tool to the pinned Plow plugin, filters group ingress,
-disables command coalescing, and forwards MCP's tool-name header. The build
-fails if any expected pinned-source anchor changes.
+The cloud image uses the same digest-pinned Plow base and startup/runtime
+patterns as [Meetly](https://github.com/plow-pbc/meetly-openclaw-agent). A required independent
+startup extension supplies four guest tools and three owner-only tools. Custom
+preboot refreshes that extension on every restart, keeps owner model preferences,
+sets the Mac relay timeout to 60 seconds, and retains the base's five-minute
+Agent Index reporter. The channel customization filters group ingress, disables
+command coalescing, and forwards MCP's tool-name header. Builds fail if an
+expected pinned-source anchor changes. See [the complete pattern comparison](docs/meetly-patterns.md).
+
+Confirmed receipts drive a fresh setup gate before owner model turns. A native
+OpenClaw command cron reconciles unfinished group receipts every five minutes
+after configuration. It uses no model and makes no service calls when idle.
+Atomic private state and shared process locks coordinate it with the gateway
+watcher. Corrupt state and unknown delivery cannot trigger automatic replay.
+
+Compose binds the dashboard to loopback and supports a different host port with
+`HOST_PORT=3002 docker compose up -d`. For local Apple Silicon use a native linux/arm64 build; the base supports
+both architectures. The public cloud release targets linux/amd64. Rosetta
+emulation can fail OpenClaw's secure file locks with openat2 ENOSYS; do not
+disable those locks. Run `docker compose build` for the native local image. Model choices remain the pinned base defaults until the operator changes
+them; restarting preserves those choices.
 
 ## Verify
 
@@ -348,8 +386,12 @@ npm run typecheck
 ```
 
 These tests exercise HTTP source verification, concurrent duplicate
-delivery, restart persistence, revocation, response correlation, and
-failures. They do not prove a live Plow/Latch account or phone is connected.
+delivery, cross-process locks, startup activation, fresh setup state, private
+owner questions, revocation, pause/resume, scheduler reconciliation, response
+correlation and failures. Container CI additionally discovers the actual
+OpenClaw tools and rehearses 100 participants through the real gateway with
+simulated phone transport and native workers. Use [the live venue checklist](checks/manual-scenarios.md)
+and [the runtime boundary notes](checks/runtime-spike.md) before a stage demo. They do not prove a live Plow/Latch account or phone is connected.
 
 ## License
 

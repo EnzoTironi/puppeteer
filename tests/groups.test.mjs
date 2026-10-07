@@ -104,3 +104,25 @@ test('an approval that arrives after the queued receipt is announced once, then 
   f.states.set(id(turn),'replied');await f.wait(()=>f.sent.some(s=>s.text.includes('coder replied:')));
   assert.equal(f.calls.filter(c=>c[0]==='ask').length,1);
 });
+
+test('private owner handoffs remain silent in the group on success or failure and never become code',async t=>{
+ const f=await fixture(t);let questions=0;
+ for(const failure of [false,true]) {
+  const group=new Groups(f.requests,f.plow,f.directory,{async ask(){questions++;if(failure)throw new Error('owner_dm_unavailable');}});
+  await group.receive({...turn,prompt:'/prompt ask owner Which file?'},f.send,f.controller.signal);
+ }
+ assert.equal(questions,2);assert.equal(f.sent.length,0);assert.equal(f.calls.length,0);
+});
+test('watcher and maintenance process cannot duplicate a final or an interrupted approval notice',async t=>{
+ const f=await fixture(t);await f.group.receive(turn,f.send,f.controller.signal);f.controller.abort();await new Promise(r=>setTimeout(r,40));
+ const path=f.directory+'/groups/'+id(turn)+'.json',job=JSON.parse(await readFile(path,'utf8'));
+ job.announcement='new';await writeFile(path,JSON.stringify(job));f.states.set(id(turn),'awaiting_approval');
+ // This emulates a crash before the original receipt announcement.
+ const next=new AbortController();t.after(()=>next.abort());
+ const safeRequests={...f.requests,ask:async()=>({request:id(turn),agent:'coder',status:'awaiting_approval'})};
+ const a=new Groups(safeRequests,f.plow,f.directory),b=new Groups(safeRequests,f.plow,f.directory);
+ await Promise.all([a.recoverOnce(f.send,next.signal),b.recoverOnce(f.send,next.signal)]);
+ assert.equal(f.sent.filter(s=>s.text.includes('owner to approve')).length,1);
+ f.states.set(id(turn),'replied');await Promise.all([a.recoverOnce(f.send,next.signal),b.recoverOnce(f.send,next.signal)]);
+ assert.equal(f.sent.filter(s=>s.text.includes('coder replied:')).length,1);
+});

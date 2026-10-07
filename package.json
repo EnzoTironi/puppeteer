@@ -2,8 +2,11 @@
   "name": "puppeteer-openclaw-tools",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=24.16"
+  },
   "scripts": {
-    "test": "node --experimental-strip-types --test tests/plugin.test.mjs tests/setup.test.mjs tests/replies.test.mjs tests/groups.test.mjs",
+    "test": "node --test tests/plugin.test.mjs tests/setup.test.mjs tests/replies.test.mjs tests/groups.test.mjs tests/store.test.mjs tests/gate.test.mjs tests/questions.test.mjs tests/recovery.test.mjs tests/boot.test.mjs tests/prompt.test.mjs",
     "typecheck": "node scripts/typecheck.mjs"
   },
   "devDependencies": {
