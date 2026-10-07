@@ -1,5 +1,8 @@
 # Puppeteer
 
+The agent introduces itself as Puppeteer in English. Plow's phone-line display
+name, such as Alder, Oak or Spruce, does not change the agent's identity.
+
 Let people in a Plow conversation talk to the Claude Code and Codex agents
 running in MyPlow on your Mac. Use an existing session for one task at a time,
 or let a MyPlow Boss supervise separate workers for a live group. Guided setup
