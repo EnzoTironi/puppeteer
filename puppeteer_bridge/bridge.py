@@ -104,6 +104,22 @@ class Bridge:
             raise BridgeError("chat_not_shared")
         return config
 
+    def status(self):
+        """A read-only connection check; never starts a worker coordinator."""
+        try:
+            config = self.config()
+        except BridgeError as error:
+            if str(error).startswith("not_configured:") and not self.config_path.exists():
+                return {"connection_checked": True, "configured": False, "paused": False}
+            raise
+        return {"connection_checked": True, "configured": True, "paused": bool(config.get("paused"))}
+
+    def resume(self):
+        """Keep the owner's grants and project while reopening new requests."""
+        config = self.config()
+        private_json(self.config_path, {**config, "paused": False})
+        return {"resumed": True}
+
     def configure(self, agents, chats, token_file, api_base):
         if os.environ.get("AGENT_ID"):
             raise BridgeError("configure_from_the_owner_terminal")
@@ -524,6 +540,8 @@ def main(argv=None, cfg=None):
     demo.add_argument("--group", required=True)
     demo.add_argument("--boss", help="Optional existing local Boss chosen by the owner")
     commands.add_parser("stop", help="Owner: pause the parallel demo, cancel waiting work and retire its workers")
+    commands.add_parser("resume", help="Owner: resume the same workspace and grants without replaying cancelled work")
+    commands.add_parser("status", help="Owner: check the connector and pairing without starting workers")
     prepare = commands.add_parser("prepare", help="Owner: prepare a private pairing file")
     prepare.add_argument("--request", required=True)
     pair = commands.add_parser("pair", help="Owner: consume a private pairing file")
@@ -569,6 +587,10 @@ def main(argv=None, cfg=None):
             value = bridge.demo(args.group, args.boss)
         elif args.command == "stop":
             value = bridge.stop()
+        elif args.command == "resume":
+            value = bridge.resume()
+        elif args.command == "status":
+            value = bridge.status()
         elif args.command == "prepare":
             value = bridge.prepare(args.request)
         elif args.command == "pair":
