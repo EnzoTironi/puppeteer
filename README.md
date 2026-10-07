@@ -84,7 +84,7 @@ cloud environment, with the selected runtime directory included for writes.
 The original terminal path remains available for custom deployments:
 
 ```sh
-uv tool install 'git+https://github.com/EnzoTironi/puppeteer.git@6c0cc5fbf04e43b84e290abbc39606ecac2b00c4'
+uv tool install 'git+https://github.com/EnzoTironi/puppeteer.git@753db8d94a7552cdebde6de578c4a919c550f11c'
 plow-agents login
 puppeteer-bridge configure \
   --agent coder=sams-mac/main:eng-codex \
@@ -113,6 +113,7 @@ Only human messages that begin with the exact `/prompt` command are processed:
 
 ```text
 /prompt help
+/prompt what?
 /prompt agents
 /prompt Fix the failing test in the demo project
 /prompt status REQUEST_ID
