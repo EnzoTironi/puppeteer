@@ -328,7 +328,7 @@ class Bridge:
         if not re.match(r"^/prompt(?:[ \t\r\n]|$)", body):
             raise BridgeError("prompt_prefix_required")
         prompt = body[len("/prompt"):].strip()
-        if not prompt:
+        if not prompt or re.fullmatch(r"(?:help|what(?: can you do)?)\??", prompt, re.IGNORECASE):
             raise BridgeError("prompt_text_required")
         return prompt
 
@@ -483,8 +483,6 @@ class Bridge:
                 db.execute("UPDATE requests SET status='timed_out' WHERE id=?", (request_id,))
                 row = db.execute("SELECT * FROM requests WHERE id=?", (request_id,)).fetchone()
             value = self.receipt(row)
-        if "parallel" in config:
-            Team(self, config).kick()
         return value
 
     def reply(self, request_id, text, key):

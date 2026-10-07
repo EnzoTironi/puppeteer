@@ -5,11 +5,12 @@ import { publicReply, promptCommand, promptHelp } from '../plugin/replies.ts';
 const turn={chat:'cht_group',message:'msg_alex',session:'group',sender:'Alex',prompt:'/prompt Fix the failing test'};
 const receipt={request:'a1234567'+'b'.repeat(24),agent:'coder'};
 test('control commands have an exact grammar, including short IDs and full replies',()=>{
- for(const text of ['/prompt','/prompt \n','/prompt help']) assert.equal(promptCommand(text).kind,'help');
+ for(const text of ['/prompt','/prompt \n','/prompt help','/prompt what?','/prompt WHAT','/prompt What can you do?']) assert.equal(promptCommand(text).kind,'help');
  for(const text of ['/prompt agents','/prompt List the shared coding agents']) assert.equal(promptCommand(text).kind,'agents');
  assert.deepEqual(promptCommand('/prompt status #A1234567 full'),{kind:'status',request:'a1234567',full:true});
  for(const text of ['/prompt status','/prompt status ../private','/prompt status bad-id']) assert.equal(promptCommand(text).kind,'invalid_status');
  assert.equal(promptCommand('/prompt Explain the status module').kind,'task');
+ assert.equal(promptCommand('/prompt what is 2+2?').kind,'task');
 });
 test('each answer identifies the requester, request and actual local agent',()=>{
  assert.equal(publicReply({...receipt,status:'replied',reply:'Changed greeting.py. Ran python3 test_greeting.py: 1 test passed.'},turn),
@@ -29,7 +30,7 @@ test('pending work cannot claim success or invent approval, readiness or elapsed
  assert.match(publicReply({...receipt,status:'submitted'},turn),/coder accepted your task/);
 });
 test('every failure gives an accurate action and never a claimed coding result',()=>{
- const cases=[['not_ready',/didn't accept/],['send_failed',/send failure/],['timed_out',/expired after 15 minutes/]];
+ const cases=[['not_ready',/didn't accept/],['send_failed',/couldn't reach a coding worker/],['timed_out',/expired after 15 minutes/]];
  for(const [status,pattern] of cases) assert.match(publicReply({...receipt,status},turn),pattern);
  for(const error of ['chat_not_shared','request_not_shared','local_agent_unavailable','latch_denied','latch_blocked','plow_http_503','unknown_internal_error']) {
   const text=publicReply({error},turn); assert.doesNotMatch(text,/unknown_internal_error|plow_http|tests? passed|success/i);
