@@ -15,6 +15,7 @@ LABEL org.opencontainers.image.title="Puppeteer" \
 
 COPY LICENSE /usr/share/licenses/puppeteer/LICENSE
 COPY prompt/AGENTS.md /opt/plow/prompt/AGENTS.md
+COPY prompt/SOUL.md /opt/plow/prompt/SOUL.md
 COPY skills/ /opt/plow/skills/
 COPY plugin/ /opt/plow/puppeteer-src/
 COPY scripts/customize-base.mjs /opt/plow/customize-puppeteer.mjs

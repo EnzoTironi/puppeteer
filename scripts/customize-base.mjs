@@ -49,6 +49,7 @@ await replace(join(plugin, "index.js"), '        if (!email && observedReplyDeli
 await replace(join(plugin, "index.js"), '  registerCapabilities(api) {', '  registerCapabilities(api) {\n    registerPuppeteer(api);');
 await replace(join(plugin, "index.js"), 'sourceReplyDeliveryMode: command && !senderIsOwner && chat.trusted ? "message_tool_only" : "automatic",', 'sourceReplyDeliveryMode: isPrompt(body) ? "automatic" : command && !senderIsOwner && chat.trusted ? "message_tool_only" : "automatic",');
 await replace(join(plugin, "index.js"), 'inboundHistory: history.map(m => ({', 'inboundHistory: history.filter(m => kind !== "group" || isPrompt(m.body)).map(m => ({');
+await replace(join(plugin, "index.js"), 'rawBody: body },', 'rawBody: body, bodyForAgent: `${body}\\n\\nPuppeteer response language: English.` },');
 await replace(join(plugin, "transport.js"), 'import { mkdir, readFile, rename, writeFile } from "node:fs/promises";', 'import { isPrompt } from "./puppeteer.js";\nimport { mkdir, readFile, rename, writeFile } from "node:fs/promises";');
 await replace(join(plugin, "transport.js"), 'if (seen.size > 512)', 'if (seen.size > 4096)');
 await replace(join(plugin, "transport.js"), 'while (handled.size > 512)', 'while (handled.size > 4096)');
@@ -62,5 +63,7 @@ await replace(join(plugin, "transport.js"), '    const sender = message.sender;'
     }
     const sender = message.sender;`);
 await replace(join(root, "boot/config.js"), 'queue: { mode: "collect" }', 'queue: { mode: "followup", cap: 256, drop: "new" }');
+await replace(join(root, "boot/config.js"), 'const name = identity.agent?.name;', 'const name = "Puppeteer";');
+await replace(join(root, "boot/main.js"), '  const prompt = await readFile("/opt/plow/prompt/AGENTS.md", "utf8");', '  await writeFile("/var/lib/plow/workspace/SOUL.md", await readFile("/opt/plow/prompt/SOUL.md", "utf8"));\n  const prompt = await readFile("/opt/plow/prompt/AGENTS.md", "utf8");');
 await replace(join(root, "boot/config.js"), '...guestTools], deny: ["ask_user"]', '"puppeteer_setup", ...guestTools], deny: ["ask_user"]');
 await replace(join(root, "boot/mcp-bridge.js"), '"mcp-method", "last-event-id"', '"mcp-method", "mcp-name", "last-event-id"');

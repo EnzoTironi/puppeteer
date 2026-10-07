@@ -86,6 +86,10 @@ jobs:
         run: |
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           docker run --rm --network none -v "$PWD/tests/gateway-stage.mjs:/tmp/gateway-stage.mjs:ro" --entrypoint node "ghcr.io/$owner/puppeteer-openclaw:$GITHUB_SHA" /tmp/gateway-stage.mjs
+      - name: Verify identity through the full real gateway with an Alder-named line
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          docker run --rm --network none -v "$PWD/tests/identity-gateway.mjs:/tmp/identity-gateway.mjs:ro" --entrypoint node "ghcr.io/$owner/puppeteer-openclaw:$GITHUB_SHA" /tmp/identity-gateway.mjs
       - name: Boot offline gateway probe
         run: |
           owner="${GITHUB_REPOSITORY_OWNER,,}"
