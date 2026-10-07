@@ -5,8 +5,9 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import entry from '/opt/plow/plugin/dist/index.js';
+import puppeteerEntry from '/opt/puppeteer/plugin/index.js';
 const {WebSocketServer}=createRequire('/opt/plow/plugin/package.json')('ws');
-const audience=['puppeteer_agents','puppeteer_ask','puppeteer_result'];
+const audience=['puppeteer_agents','puppeteer_ask','puppeteer_result','puppeteer_ask_owner'];
 
 test('100-person group: 1004 messages, 60 duplicates, 100 separate receipts and automatic verified replies',async t=>{
  const root=await mkdtemp(tmpdir()+'/puppeteer-load-');
@@ -37,7 +38,8 @@ test('100-person group: 1004 messages, 60 duplicates, 100 separate receipts and 
   if(path.endsWith('/messages')){const query=new URL(url).searchParams,limit=Number(query.get('limit')??50),ordered=inbound.toReversed(),cursor=query.get('starting_after'),start=cursor?Math.max(0,ordered.findIndex(row=>row.uid===cursor)+1):0;return Response.json({data:ordered.slice(start,start+limit),has_more:start+limit<ordered.length});}
   return Response.json(path==='/v1/agents/me'?{line:{uid:'line'}}:path==='/v1/chats'?{data:[chat],has_more:false}:path==='/v1/chats/cht_load'?chat:{ticket:'ticket'});
  });
- entry.register({registrationMode:'full',config:{},on(){},registerTool(){},logger:{info(){}},registerChannel:({plugin})=>{channel=plugin;},runtime:{channel:{routing:{resolveAgentRoute:()=>({agentId:'main',sessionKey:'load-session'})},inbound:{buildContext:async value=>value,dispatch:async()=>{modelCalls++;throw new Error('Cloud group model would serialize or rewrite the audience task');}}}}});
+ const api={registrationMode:'full',config:{},on(){},registerTool(){},logger:{info(){}},registerChannel:({plugin})=>{channel=plugin;},runtime:{channel:{routing:{resolveAgentRoute:()=>({agentId:'main',sessionKey:'load-session'})},inbound:{buildContext:async value=>value,dispatch:async()=>{modelCalls++;throw new Error('Cloud group model would serialize or rewrite the audience task');}}}}};
+ puppeteerEntry.register(api);entry.register(api);
  server.on('connection',socket=>{const rows=phase===1?[...inbound,...inbound.slice(0,30)]:[...inbound.slice(0,30),inbound.at(-1)];for(const message of rows)socket.send(JSON.stringify({event_type:'message_received',event_id:message.uid,chat_id:chat.uid,data:{message}}));});
  const run=()=>channel.gateway.startAccount({account:{apiBase:address,accountId:'chat',lineUid:'line',guestTools:audience},cfg:{messages:{queue:{mode:'followup',cap:256,drop:'new'}}},abortSignal:controller.signal,log:{info(text){logs.push(text);const hit=text.match(/^(?:ignored non-command|acked) chat=cht_load message=(msg_(?:load|control)_\d+)/);if(hit)acked.add(hit[1]);if(phase===1&&acked.size===1004&&!lateDuplicates){lateDuplicates=true;for(const socket of server.clients)for(const message of inbound.slice(0,30))socket.send(JSON.stringify({event_type:'message_received',event_id:message.uid,chat_id:chat.uid,data:{message}}));}stop();}}});
  const started=performance.now();await run();

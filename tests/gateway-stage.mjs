@@ -2,11 +2,12 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { renderConfig, syncConfig } from '/opt/plow/boot/config.js';
 import { startGateway } from '/opt/plow/boot/process.js';
+import { applyGate, installGate } from '/opt/puppeteer/boot/gate.ts';
 const {WebSocketServer}=createRequire('/opt/plow/plugin/package.json')('ws');
 const root=await mkdtemp(join(tmpdir(),'puppeteer-gateway-'));
 process.env.OPENCLAW_STATE_DIR=root;
@@ -21,11 +22,17 @@ process.env.PUPPETEER_GROUP_POLL_MS='40';
 const members=Array.from({length:100},(_,i)=>({type:'member',uid:'mem_'+i,role:i===0?'owner':'member',display_name:'Attendee '+i,provider_key:'+1555'+String(i).padStart(7,'0')}));
 const chat={uid:'cht_stage',status:'active',trusted:false,display_name:'Closed stage fixture',participants:[...members,{type:'agent',relationship:'self',line:{uid:'ln_stage',display_name:'Puppeteer'}}]};
 const ownerChat={uid:'cht_owner',status:'active',trusted:true,display_name:'Owner SDK probe',participants:[members[0],chat.participants.at(-1)]};
-const messages=[],outbound=[],commands=[],modelTools=[],acked=new Set(),native=new Map(),nativeQueue=[];
+const messages=[],outbound=[],outboundChats=[],commands=[],modelTools=[],acked=new Set(),native=new Map(),nativeQueue=[];
 let nativeActive=0,nativePeak=0;
 function advanceWorkers() { while(nativeActive<4&&nativeQueue.length) {const request=nativeQueue.shift(),job=native.get(request);nativeActive++;nativePeak=Math.max(nativePeak,nativeActive);job.status="submitted";setTimeout(()=>{job.status="replied";nativeActive--;advanceWorkers();},40+(3-(job.index%4))*40);}}
-let modelCalls=0,published=false,ownerPublished=false,child,log='',failure,doneResolve;
+let modelCalls=0,published=false,ownerPublished=false,questionPublished=false,answerPublished=false,child,log='',failure,doneResolve;
 const done=new Promise(r=>{doneResolve=r;});
+function publish(message) {
+ messages.push(message);
+ for(const socket of sockets.clients)socket.send(JSON.stringify({event_type:'message_received',event_id:message.uid,chat_id:message.chat_uid,data:{message}}));
+}
+const ownerAnswer='Work on greeting.py.';
+
 const toolOutput=message=>{
  const text=typeof message.content==='string'?message.content:JSON.stringify(message.content);
  try{return JSON.parse(text);}catch{return undefined;}
@@ -47,7 +54,14 @@ async function handle(req,res) {
   for(const tool of ['puppeteer_agents','puppeteer_ask','puppeteer_result'])assert.ok(names.includes(tool));
   const previous=body.messages.filter(m=>m.role==='tool').at(-1); const value=previous?toolOutput(previous):undefined;
   let name,args;
-  if(!previous) {name='puppeteer_ask';args={agent:'coder'};}
+  if(answerPublished) {
+   const [question]=JSON.parse(await readFile(join(root,'receipts/questions.json'),'utf8'));
+   assert.ok(JSON.stringify(body.messages).includes(question.id),'Fresh owner gate supplies the question');
+   assert.ok(names.includes('puppeteer_answer_owner'));
+   if(value?.sent===true)return sse(res,{role:'assistant',content:'Sent your answer to the group.'},'stop');
+   name='puppeteer_answer_owner';args={question:question.id,askedAt:question.askedAt,text:ownerAnswer};
+  }
+  else if(!previous) {name='puppeteer_ask';args={agent:'coder'};}
   else if(['queued','submitted','pending','running'].includes(value?.status)) {name='puppeteer_result';args={request:value.request};}
   else if(value?.status==='replied') return sse(res,{role:'assistant',content:'I ran 200 tests and everything passed.'},'stop');
   else {failure='Unexpected real SDK tool response: '+JSON.stringify(value); return sse(res,{role:'assistant',content:'Fixture could not verify the result.'},'stop');}
@@ -67,18 +81,24 @@ async function handle(req,res) {
   } else throw new Error('Unexpected Mac operation');
   return json({jsonrpc:'2.0',id:body.id,result:{content:[{type:'text',text:JSON.stringify({status:'completed',exit_code:0,output:JSON.stringify(value)+'\n'})}]}});
  }
- if(path==='/v1/agents/me')return json({agent:{name:'Puppeteer'},line:{uid:'ln_stage'}});
+ if(path==='/v1/agents/me')return json({agent:{name:'Puppeteer'},line:{uid:'ln_stage'},chats:[chat,ownerChat]});
  if(path==='/v1/chats')return json({data:[chat,ownerChat],has_more:false});
  if(path==='/v1/chats/cht_owner')return json(ownerChat);
  if(path==='/v1/chats/cht_stage')return json(chat);
  if(path==='/v1/ws/ticket')return json({ticket:'fixture-ticket'});
  if(['/v1/chats/cht_stage/messages','/v1/chats/cht_owner/messages'].includes(path) && req.method==='POST') {
-  outbound.push(body.body); json({uid:'msg_out_'+outbound.length});
+  outbound.push(body.body);outboundChats.push(path.split('/')[3]); json({uid:'msg_out_'+outbound.length});
   if(outbound.filter(text=>text.includes('coder replied:')).length===100&&!ownerPublished) {
    ownerPublished=true;const message={uid:'msg_owner_0',chat_uid:ownerChat.uid,direction:'inbound',sender:members[0],body:'/prompt Explain the native owner SDK probe',attachments:[],created_at:new Date().toISOString()};messages.push(message);
    for(const socket of sockets.clients)socket.send(JSON.stringify({event_type:'message_received',event_id:message.uid,chat_id:ownerChat.uid,data:{message}}));
   }
-  if(outbound.some(text=>text.endsWith('Actual coding answer for msg_owner_0')))doneResolve(); return;
+  if(body.body.endsWith('Actual coding answer for msg_owner_0')&&!questionPublished) {
+   questionPublished=true;setTimeout(()=>publish({uid:'msg_owner_question',chat_uid:chat.uid,direction:'inbound',sender:members[1],body:'/prompt ask owner Which file should we work on?',attachments:[],created_at:new Date().toISOString()}),100);
+  }
+  if(path.includes('cht_owner')&&body.body.includes('Which file should we work on?')&&!answerPublished) {
+   answerPublished=true;setTimeout(()=>publish({uid:'msg_owner_answer',chat_uid:ownerChat.uid,direction:'inbound',sender:members[0],body:ownerAnswer,attachments:[],created_at:new Date().toISOString()}),150);
+  }
+  if(body.body==='Sent your answer to the group.')doneResolve(); return;
  }
  if(path.endsWith('/ack')) {acked.add(path.split('/').at(-2));return json({ok:true});}
  if(['/v1/chats/cht_stage/messages','/v1/chats/cht_owner/messages'].includes(path)) {
@@ -104,27 +124,45 @@ sockets.on('connection',socket=>{
 const base='http://127.0.0.1:'+server.address().port;
 process.env.PLOW_API_BASE=base;
 await mkdir(join(root,'workspace'),{recursive:true});
+await mkdir(join(root,'receipts'),{recursive:true});
+await writeFile(join(root,'receipts','a'.repeat(32)+'.json'),JSON.stringify({chat:'cht_owner',message:'msg_setup',created:Date.now(),completed:Date.now(),
+ action:{kind:'share',phase:'pair',target:'sam/main:Boss',project:'sam/demo:coder',workers:4,chats:['cht_owner','cht_stage'],group:'cht_stage'},
+ stage:{kind:'done',value:{configured:true,chats:['cht_owner','cht_stage']}}}));
 await writeFile(join(root,'workspace/AGENTS.md'),await (await import('node:fs/promises')).readFile('/opt/plow/prompt/AGENTS.md','utf8'));
 const cfg=renderConfig({agent:{name:'Puppeteer'},line:{uid:'ln_stage'},chats:[chat]},base);
 cfg.agents.defaults.workspace=join(root,'workspace');
+await installGate('/opt/puppeteer/plugin',join(root,'extensions/puppeteer'));applyGate(cfg);
+cfg.tools.alsoAllow.push('puppeteer_setup','puppeteer_setup_status','puppeteer_answer_owner');
+await writeFile(process.env.OPENCLAW_CONFIG_PATH,JSON.stringify(cfg));
 await syncConfig(cfg,process.env.OPENCLAW_CONFIG_PATH,process.env.OPENCLAW_INCLUDE_ROOTS);
 const started=Date.now();
 child=await startGateway(true);
 child.stdout.on('data',chunk=>{log+=chunk;}); child.stderr.on('data',chunk=>{log+=chunk;});
 child.once('exit',code=>{if(code && !failure)failure='Gateway exited '+code;doneResolve();});
-const timeout=setTimeout(()=>{failure??='Gateway stage fixture timed out';doneResolve();},60_000);
+const timeout=setTimeout(()=>{failure??='Gateway stage fixture timed out';doneResolve();},180_000);
 try {
  await done; clearTimeout(timeout);
  if(failure)throw new Error(failure);
- assert.equal(outbound.length,201);
+ assert.equal(outbound.length,204);
+ assert.equal(outbound.filter(text=>text.includes('Which file should we work on?')).length,1);
+ assert.equal(outboundChats[outbound.findIndex(text=>text.includes('Which file should we work on?'))],'cht_owner');
+ assert.equal(outbound.filter(text=>text==='Attendee 1, the Mac owner replied:\n\n'+ownerAnswer).length,1);
+ assert.equal(outboundChats[outbound.findIndex(text=>text==='Attendee 1, the Mac owner replied:\n\n'+ownerAnswer)],'cht_stage');
+ assert.equal(commands.filter(argv=>argv?.[1]==='ask').length,101,'Private questions never submit coding work');
+ const {execFileSync}=await import('node:child_process');
+ const cron=JSON.parse(execFileSync(process.execPath,['/app/openclaw.mjs','cron','list','--all','--json'],{encoding:'utf8'}));
+ assert.equal(cron.jobs.filter(job=>job.name==='puppeteer-recover').length,1,'Startup reconciles one native command job');
+ const before={outbound:outbound.length,commands:commands.length,modelCalls};
+ execFileSync(process.execPath,['/opt/puppeteer/scripts/recover.mjs'],{encoding:'utf8'});
+ assert.deepEqual({outbound:outbound.length,commands:commands.length,modelCalls},before,'Idle command recovery performs no model or service calls');
  assert.equal(outbound.filter(text=>text.includes('Queued for a separate')).length,100);
  assert.equal(commands.filter(argv=>argv?.[1]==='ask').length,101);
  assert.equal(nativePeak,4);assert.ok(modelCalls>=3);
  for(let i=0;i<100;i++)assert.ok(outbound.some(text=>text.startsWith('Attendee '+i+' · #')&&text.endsWith('Actual coding answer for msg_stage_'+i)));
- const checkpoint=JSON.parse(await (await import('node:fs/promises')).readFile(join(root,'plow-checkpoints/cht_stage'),'utf8'));assert.equal(checkpoint.recent.length,100);
+ const checkpoint=JSON.parse(await (await import('node:fs/promises')).readFile(join(root,'plow-checkpoints/cht_stage'),'utf8'));assert.equal(checkpoint.recent.length,101);
  assert.ok(outbound.some(text=>text.endsWith('Actual coding answer for msg_owner_0')));
  assert.ok(outbound.every(text=>!text.includes('200 tests')&&!text.includes('everything passed')));
- const proof={type:'full real OpenClaw gateway and Plow channel; simulated native workers and Latch',participants:100,acceptedTasks:100,uniqueLocalDispatches:100,verifiedFinalReplies:100,simulatedNativeWorkerPeak:nativePeak,groupModelCalls:0,ownerSdkModelCalls:modelCalls,ownerFabricatedFinalReplaced:true,repliesMatchedOriginalParticipants:true,adoptedMessages:checkpoint.recent.length,fixtureElapsedMs:Date.now()-started,examples:outbound.filter(text=>text.includes('coder replied:')).slice(0,4)};
+ const proof={type:'full real OpenClaw gateway and Plow channel; simulated native workers and Latch',participants:100,acceptedTasks:100,uniqueLocalDispatches:100,verifiedFinalReplies:100,simulatedNativeWorkerPeak:nativePeak,groupModelCalls:0,ownerSdkModelCalls:modelCalls,ownerFabricatedFinalReplaced:true,privateOwnerQuestionSentOnce:true,ownerAnswerReturnedOnlyToOriginalGroup:true,questionCodingTasks:0,commandCronCount:1,idleRecoveryServiceCalls:0,repliesMatchedOriginalParticipants:true,adoptedMessages:checkpoint.recent.length,fixtureElapsedMs:Date.now()-started,examples:outbound.filter(text=>text.includes('coder replied:')).slice(0,4)};
  if(process.env.PUPPETEER_GATEWAY_EVIDENCE)await writeFile(process.env.PUPPETEER_GATEWAY_EVIDENCE,JSON.stringify(proof,null,2)+'\n');
  console.log('GATEWAY_STAGE_OK '+JSON.stringify(proof));
 } catch(e) {console.error(e);console.error(log.slice(-6000));process.exitCode=1;}

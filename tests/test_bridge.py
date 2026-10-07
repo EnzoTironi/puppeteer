@@ -121,6 +121,27 @@ class BridgeTest(unittest.TestCase):
         self.assertNotIn("c" * 64, json.dumps(receipt))
         self.assertNotIn("c" * 64, (self.bridge.state / "requests.sqlite3").read_bytes().decode(errors="ignore"))
 
+    def test_status_is_read_only_and_missing_configuration_is_not_claimed_connected(self):
+        before = self.bridge.config_path.read_bytes()
+        self.assertEqual(self.bridge.status(), {"connection_checked": True, "configured": True, "paused": False})
+        self.assertEqual(self.bridge.config_path.read_bytes(), before)
+        self.dispatch.assert_not_called()
+        self.bridge.config_path.unlink()
+        self.assertEqual(self.bridge.status(), {"connection_checked": True, "configured": False, "paused": False})
+        self.bridge.config_path.write_text("{broken")
+        with self.assertRaises(BridgeError):
+            self.bridge.status()
+        self.assertEqual(self.bridge.config_path.read_text(), "{broken")
+
+    def test_resume_keeps_grants_and_never_sends_or_replays_work(self):
+        config = self.bridge.config()
+        self.bridge.config_path.write_text(json.dumps({**config, "paused": True}))
+        self.assertTrue(self.bridge.status()["paused"])
+        self.assertEqual(self.bridge.resume(), {"resumed": True})
+        self.assertEqual(self.bridge.config(), {**config, "paused": False})
+        self.assertEqual(self.bridge.config_path.stat().st_mode & 0o777, 0o600)
+        self.dispatch.assert_not_called()
+
     def test_signed_source_refuses_tampering_and_another_install(self):
         self.pair_signed()
         proof, signature = self.signed_source()

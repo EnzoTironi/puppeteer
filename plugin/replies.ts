@@ -6,6 +6,8 @@ export type PromptCommand =
   | { kind: "agents" }
   | { kind: "status"; request: string; full: boolean }
   | { kind: "invalid_status" }
+  | { kind: "owner_question"; question: string }
+  | { kind: "invalid_question" }
   | { kind: "task" };
 
 export function promptCommand(prompt: string): PromptCommand {
@@ -15,10 +17,13 @@ export function promptCommand(prompt: string): PromptCommand {
   const status = /^status\s+#?([a-f0-9]{8}|[a-f0-9]{32})(?:\s+(full))?$/i.exec(text);
   if (status?.[1]) return { kind: "status", request: status[1].toLowerCase(), full: status[2] !== undefined };
   if (/^status(?:\s|$)/i.test(text)) return { kind: "invalid_status" };
+  const question = /^ask owner\s+([\s\S]+)$/i.exec(text)?.[1]?.trim();
+  if (question && question.length <= 500) return { kind: "owner_question", question };
+  if (/^ask owner(?:\s|$)/i.test(text)) return { kind: "invalid_question" };
   return { kind: "task" };
 }
 
-export const promptHelp = "I'm Puppeteer, your link to the coding team the owner shared. Start your request with /prompt.\n\n/prompt agents\n/prompt Fix the failing test\n/prompt status REQUEST_ID\n\nIn parallel mode, each task gets its own worker. Extra tasks wait in the queue. I'll stay quiet during regular group chat.";
+export const promptHelp = "I'm Puppeteer, your link to the coding team the owner shared. Start your request with /prompt.\n\n/prompt agents\n/prompt Fix the failing test\n/prompt status REQUEST_ID\n/prompt ask owner Which file should we work on?\n\nOwner questions go privately to the Mac owner. In parallel mode, each task gets its own worker. Extra tasks wait in the queue. I'll stay quiet during regular group chat.";
 
 function errorReply(error: string): string {
   if (["chat_not_shared", "agent_not_shared", "request_not_shared", "owner_main_dm_required"].includes(error)) {
@@ -27,7 +32,7 @@ function errorReply(error: string): string {
       : "This conversation doesn't have access to a coding workspace. The owner can connect this group from my private setup chat.";
   }
   if (error === "ambiguous_request_id") return "That short ID matches more than one request. Ask the owner for the full request ID.";
-  if (error === "demo_paused") return "The owner has paused this demo. I did not accept a new task. The owner can enable sharing again in my private setup chat.";
+  if (error === "demo_paused") return "The owner has paused this demo. I did not accept a new task. The owner can resume it in my private setup chat.";
   if (error === "local_agent_unavailable") return "The shared session is unavailable. The owner needs to open it in MyPlow before we can send a task.";
   if (["latch_denied", "latch_blocked"].includes(error)) return "Latch refused this operation. I stopped and did not try another route.";
   if (error === "prompt_text_required" || error === "control_request_requires_matching_tool") return promptHelp;

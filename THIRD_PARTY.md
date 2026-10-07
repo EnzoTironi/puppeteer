@@ -1,7 +1,7 @@
 # Source attribution
 
 The cloud image extends `plow-pbc/plow-openclaw-agent` at
-`9ba247396c05a695bb0c8abf228fdb8e490c81ed`. Its base prompt and local dashboard
+`ddbaa6bc0f9e071d9411777b91590e755e367d84`. Its base prompt and local dashboard
 Caddy configuration come from that repository, licensed under Apache-2.0.
 The base image retains those files' notices and dependency licenses.
 
@@ -10,7 +10,14 @@ The local connector started as a proposed addition to the MIT-licensed
 Puppeteer now ships it as a standalone package. It uses MyPlow's installed
 runtime without modifying MyPlow or depending on its Python package.
 
+Startup extension, preboot, setup gate, workflow skills, private owner questions,
+durable state and command-cron patterns were adapted from the MIT-licensed
+`plow-pbc/meetly-openclaw-agent` at
+`41666ded67215ab8fb6be5936d7010a6db81eb39`. Copyright (c) 2026 Jean Jacintho.
+Its complete license is included in `licenses/Meetly-MIT.txt` and the image.
+See `docs/meetly-patterns.md` for the implementation and domain adaptations.
+
 Puppeteer's connector, guest tools, source customization script, persona
-additions and skill are MIT licensed. The image's customized Plow channel,
-transport, configuration, plugin manifest and MCP bridge retain the upstream
+additions and skills are MIT licensed. The image's customized Plow channel,
+transport, configuration and MCP bridge retain the upstream
 Apache-2.0 license.

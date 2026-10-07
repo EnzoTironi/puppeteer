@@ -4,8 +4,9 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import entry from '/opt/plow/plugin/dist/index.js';
+import puppeteerEntry from '/opt/puppeteer/plugin/index.js';
 const {WebSocketServer}=createRequire('/opt/plow/plugin/package.json')('ws');
-const guestTools=['puppeteer_agents','puppeteer_ask','puppeteer_result'];
+const guestTools=['puppeteer_agents','puppeteer_ask','puppeteer_result','puppeteer_ask_owner'];
 
 for (const owner of [false,true]) for(const trusted of [false,true]) test(`real group ingress: owner=${owner}, trusted=${trusted}`, async t => {
  const root=await mkdtemp(tmpdir()+'/puppeteer-ingress-');
@@ -33,7 +34,8 @@ for (const owner of [false,true]) for(const trusted of [false,true]) test(`real 
   if(init?.method==='POST'&&path.endsWith('/messages')){sent.push(JSON.parse(init.body).body);stop();return Response.json({uid:'out_'+sent.length});}
   return Response.json(path.endsWith('/agents/me')?{line:{uid:'line'}}:path.endsWith('/chats')?{data:[chat],has_more:false}:path.endsWith('/chats/cht_group')?chat:path.endsWith('/messages')?{data:inbound.toReversed(),has_more:false}:{ticket:'ticket'});
  });
- entry.register({registrationMode:'full',config:{},on(){},registerTool(){},logger:{info(){}},registerChannel:({plugin})=>{channel=plugin;},runtime:{channel:{routing:{resolveAgentRoute:()=>({agentId:'main',sessionKey:'group-session'})},inbound:{buildContext:async value=>value,dispatch:async()=>{modelCalls++;throw new Error('Group task should not invoke the cloud model');}}}}});
+ const api={registrationMode:'full',config:{},on(){},registerTool(){},logger:{info(){}},registerChannel:({plugin})=>{channel=plugin;},runtime:{channel:{routing:{resolveAgentRoute:()=>({agentId:'main',sessionKey:'group-session'})},inbound:{buildContext:async value=>value,dispatch:async()=>{modelCalls++;throw new Error('Group task should not invoke the cloud model');}}}}};
+ puppeteerEntry.register(api);entry.register(api);
  server.on('connection',socket=>{for(const message of inbound)socket.send(JSON.stringify({event_type:'message_received',event_id:message.uid,chat_id:chat.uid,data:{message}}));});
  await channel.gateway.startAccount({account:{apiBase:process.env.PLOW_API_BASE,accountId:'chat',lineUid:'line',guestTools},cfg:{messages:{queue:{mode:'followup'}}},abortSignal:controller.signal,log:{info(text){logs.push(text);const hit=text.match(/^(?:ignored non-command|acked) chat=cht_group message=(msg_\d+)/);if(hit){acked.add(hit[1]);stop();}}}});
  assert.equal(acked.size,7,logs.join('\n'));assert.equal(modelCalls,0);

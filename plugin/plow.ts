@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { object } from "./latch.ts";
 import type { Turn } from "./requests.ts";
+import { canonicalHandle } from "./identity.ts";
 
 function uid(value: unknown): string {
   if (typeof value !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(value)) throw new Error("invalid_plow_identity");
@@ -11,14 +12,9 @@ function uid(value: unknown): string {
 
 type Chat = { uid: string; name: string; participants: Record<string, unknown>[] };
 type Owner = { uid: string; handle?: string };
-function handle(value: unknown): string | undefined {
-  if (typeof value !== "string" || !value.trim()) return undefined;
-  const compact = value.trim().replace(/[\s()-]/g, "");
-  return /^\+\d{10,15}$/.test(compact) ? compact : value.trim().toLowerCase();
-}
 function sameOwner(participant: Record<string, unknown>, owner: Owner): boolean {
   return participant.type === "member" && participant.role === "owner" && owner.handle !== undefined
-    && handle(participant.provider_key) === owner.handle;
+    && canonicalHandle(participant.provider_key) === owner.handle;
 }
 
 /** Only deployment credentials and authenticated Plow records supply authority. */
@@ -93,7 +89,7 @@ export class Plow {
 
   async group(turn: Turn, signal?: AbortSignal): Promise<void> {
     const chat = await this.chat(turn.chat, signal);
-    if (chat.participants.length <= 2) throw new Error("chat_not_served_by_this_agent");
+    if (chat.participants.length <= 2 || !chat.participants.some(p => p.type === "member" && p.role === "owner")) throw new Error("chat_not_served_by_this_agent");
   }
 
   async owner(turn: Turn, signal?: AbortSignal): Promise<Owner> {
@@ -104,7 +100,36 @@ export class Plow {
     if (chat.participants.length !== 2 || !object(sender)
       || !chat.participants.some(p => p.type === "member" && p.role === "owner" && p.uid === sender.uid)) throw new Error("owner_main_dm_required");
     const participant = chat.participants.find(p => p.type === "member" && p.role === "owner" && p.uid === sender.uid);
-    return { uid: uid(sender.uid), handle: handle(participant?.provider_key) };
+    return { uid: uid(sender.uid), handle: canonicalHandle(participant?.provider_key) };
+  }
+
+  async verify(turn: Turn, signal?: AbortSignal): Promise<void> {
+    await this.source(turn, await this.chat(turn.chat, signal), signal);
+  }
+
+  async ownerDm(signal?: AbortSignal): Promise<{ chat: string; name?: string }> {
+    const identity = await this.get("/agents/me", signal);
+    if (!object(identity) || !object(identity.line) || !Array.isArray(identity.chats)) throw new Error("owner_dm_unavailable");
+    const line = uid(identity.line.uid);
+    const chats = identity.chats.filter(object).filter(chat => chat.status === "active"
+      && Array.isArray(chat.participants) && chat.participants.every(object) && chat.participants.length === 2
+      && chat.participants.some(p => p.type === "agent" && p.relationship === "self" && object(p.line) && p.line.uid === line)
+      && chat.participants.some(p => p.type === "member" && p.role === "owner"));
+    if (chats.length !== 1) throw new Error("owner_dm_unavailable");
+    const chat = chats[0];
+    if (!chat || !Array.isArray(chat.participants)) throw new Error("owner_dm_unavailable");
+    const owner = chat.participants.filter(object).find(p => p.type === "member" && p.role === "owner");
+    const name = typeof owner?.display_name === "string" ? owner.display_name.trim() : "";
+    return { chat: uid(chat.uid), ...(name && !/^[+\d\s().-]+$/.test(name) ? { name: name.slice(0, 60) } : {}) };
+  }
+
+  async send(chat: string, text: string, signal?: AbortSignal): Promise<void> {
+    await this.chat(chat, signal);
+    const response = await fetch(this.base + "/v1/chats/" + uid(chat) + "/messages", { method: "POST", redirect: "error",
+      headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ body: text }), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20_000)]) : AbortSignal.timeout(20_000) });
+    const value: unknown = response.ok ? await response.json() : undefined;
+    if (!object(value) || typeof value.uid !== "string") throw new Error("phone_delivery_unknown");
   }
 
   async groups(turn: Turn, signal?: AbortSignal): Promise<Record<string, unknown>> {

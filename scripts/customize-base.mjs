@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir, readdir, copyFile } from "node:fs/promises";
 import { join } from "node:path";
 import { stripTypeScriptTypes } from "node:module";
 
@@ -13,14 +13,16 @@ const manifestPath = join(root, "plugin/openclaw.plugin.json");
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
 const baseTools = ["plow_start_thread", "plow_set_thread_trust", "plow_reply_to", "plow_send_email"];
 if (manifest.id !== "plow" || JSON.stringify(manifest.contracts?.tools) !== JSON.stringify(baseTools)) throw new Error("Pinned Plow tool manifest changed");
-manifest.contracts.tools.push("puppeteer_agents", "puppeteer_ask", "puppeteer_result", "puppeteer_setup");
-await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
-for (const name of ["latch", "plow", "requests", "replies", "groups", "puppeteer"]) {
+const extension = join(root, "../puppeteer/plugin");
+await mkdir(extension, { recursive: true });
+for (const name of ["openclaw.plugin.json", "package.json"]) await copyFile(join(root, "puppeteer-src", name), join(extension, name));
+for (const file of (await readdir(join(root, "puppeteer-src"))).filter(file => file.endsWith(".ts"))) {
+  const name = file.slice(0, -3);
   const source = await readFile(join(root, "puppeteer-src", name + ".ts"), "utf8");
-  await writeFile(join(plugin, name + ".js"), stripTypeScriptTypes(source.replace(/from "(\.\/[^"\n]+)\.ts"/g, 'from "$1.js"')));
+  await writeFile(join(extension, name + ".js"), stripTypeScriptTypes(source.replace(/from "(\.\/[^"\n]+)\.ts"/g, 'from "$1.js"')));
 }
-await replace(join(plugin, "index.js"), 'import { createHash } from "node:crypto";', 'import { createHash } from "node:crypto";\nimport { bindPuppeteerTurn, endPuppeteerTurn, isPrompt, puppeteerReply, registerPuppeteer, routePuppeteerGroup, recoverPuppeteerGroups } from "./puppeteer.js";\nimport { promptCommand, promptHelp, publicReply } from "./replies.js";');
-await replace(join(plugin, "index.js"), '  const sender = message.sender;', '  if (account.accountId === "chat" && chat.participants.length > 2 && (message.sender.type !== "member" || !isPrompt(message.body))) return "completed";\n  const sender = message.sender;');
+await replace(join(plugin, "index.js"), 'import { createHash } from "node:crypto";', 'import { createHash } from "node:crypto";\nimport { bindPuppeteerTurn, endPuppeteerTurn, isPrompt, puppeteerReply, routePuppeteerGroup, recoverPuppeteerGroups } from "/opt/puppeteer/plugin/puppeteer.js";\nimport { promptCommand, promptHelp, publicReply } from "/opt/puppeteer/plugin/replies.js";');
+await replace(join(plugin, "index.js"), '  const sender = message.sender, quoted = message.reply_to?.message;', '  if (account.accountId === "chat" && chat.participants.length > 2 && (message.sender.type !== "member" || !isPrompt(message.body))) return "completed";\n  const sender = message.sender, quoted = message.reply_to?.message;');
 await replace(join(plugin, "index.js"), '  const guestTools = !email && !chat.trusted && !senderIsOwner ? account.guestTools ?? [] : undefined;', '  const guestTools = !email && (kind === "group" || (!chat.trusted && !senderIsOwner)) ? account.guestTools ?? [] : undefined;');
 await replace(join(plugin, "index.js"), '  let activeRunId', '  let verifiedPuppeteerReply;\n  let activeRunId');
 await replace(join(plugin, "index.js"), '    silentRuns.delete(activeRunId);', '    verifiedPuppeteerReply = puppeteerReply(activeRunId) ?? verifiedPuppeteerReply;\n    silentRuns.delete(activeRunId);\n    endPuppeteerTurn(activeRunId);');
@@ -46,11 +48,10 @@ await replace(join(plugin, "index.js"), '        // Plow sends unquoted replies;
         }
         // Plow sends unquoted replies;`);
 await replace(join(plugin, "index.js"), '        if (!email && observedReplyDelivery && info.kind === "final") return null;', '        if (!email && isPrompt(body) && info.kind !== "final") return null;\n        if (!email && observedReplyDelivery && info.kind === "final") return null;');
-await replace(join(plugin, "index.js"), '  registerCapabilities(api) {', '  registerCapabilities(api) {\n    registerPuppeteer(api);');
 await replace(join(plugin, "index.js"), 'sourceReplyDeliveryMode: command && !senderIsOwner && chat.trusted ? "message_tool_only" : "automatic",', 'sourceReplyDeliveryMode: isPrompt(body) ? "automatic" : command && !senderIsOwner && chat.trusted ? "message_tool_only" : "automatic",');
 await replace(join(plugin, "index.js"), 'inboundHistory: history.map(m => ({', 'inboundHistory: history.filter(m => kind !== "group" || isPrompt(m.body)).map(m => ({');
 await replace(join(plugin, "index.js"), 'rawBody: body },', 'rawBody: body, bodyForAgent: `${body}\\n\\nPuppeteer response language: English.` },');
-await replace(join(plugin, "transport.js"), 'import { mkdir, readFile, rename, writeFile } from "node:fs/promises";', 'import { isPrompt } from "./puppeteer.js";\nimport { mkdir, readFile, rename, writeFile } from "node:fs/promises";');
+await replace(join(plugin, "transport.js"), 'import { mkdir, readFile, rename, writeFile } from "node:fs/promises";', 'import { isPrompt } from "/opt/puppeteer/plugin/puppeteer.js";\nimport { mkdir, readFile, rename, writeFile } from "node:fs/promises";');
 await replace(join(plugin, "transport.js"), 'if (seen.size > 512)', 'if (seen.size > 4096)');
 await replace(join(plugin, "transport.js"), 'while (handled.size > 512)', 'while (handled.size > 4096)');
 await replace(join(plugin, "transport.js"), 'shouldDebounce: item => account.accountId === "chat" && shouldDebounceTextInbound({', 'shouldDebounce: item => account.accountId === "chat" && !isPrompt(item.message.body) && shouldDebounceTextInbound({');
@@ -64,6 +65,4 @@ await replace(join(plugin, "transport.js"), '    const sender = message.sender;'
     const sender = message.sender;`);
 await replace(join(root, "boot/config.js"), 'queue: { mode: "collect" }', 'queue: { mode: "followup", cap: 256, drop: "new" }');
 await replace(join(root, "boot/config.js"), 'const name = identity.agent?.name;', 'const name = "Puppeteer";');
-await replace(join(root, "boot/main.js"), '  const prompt = await readFile("/opt/plow/prompt/AGENTS.md", "utf8");', '  await writeFile("/var/lib/plow/workspace/SOUL.md", await readFile("/opt/plow/prompt/SOUL.md", "utf8"));\n  const prompt = await readFile("/opt/plow/prompt/AGENTS.md", "utf8");');
-await replace(join(root, "boot/config.js"), '...guestTools], deny: ["ask_user"]', '"puppeteer_setup", ...guestTools], deny: ["ask_user"]');
 await replace(join(root, "boot/mcp-bridge.js"), '"mcp-method", "last-event-id"', '"mcp-method", "mcp-name", "last-event-id"');

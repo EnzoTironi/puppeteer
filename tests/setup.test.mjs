@@ -26,7 +26,7 @@ before(async()=>{
    value={jsonrpc:'2.0',id:body.id,result:{content:[{type:'text',text:JSON.stringify(responses.shift())}]}};
   } else {
    assert.equal(req.headers.authorization,'Bearer cloud-only-token');
-   value=route.pathname==='/v1/agents/me' ? {line:{uid:'ln_p3'}}
+   value=route.pathname==='/v1/agents/me' ? {line:{uid:'ln_p3'},chats:Object.values(chats)}
     : route.pathname==='/v1/chats' ? {data:Object.values(chats),has_more:false}
     : route.pathname.endsWith('/messages') ? {data:sources,has_more:false}
     : chats[route.pathname.split('/').at(-1)];
@@ -255,4 +255,40 @@ test('the SDK demo tool rejects raw project paths, arbitrary commands and extra 
   assert.equal((await factory.create(ctx).execute('call-demo',args)).isError,true);
  }
  endPuppeteerTurn('run-demo');assert.equal(wire.length,0);
+});
+
+test('fresh owner setup gate uses confirmed state, skips guest turns, and rejects corrupt receipts', async()=>{
+ const previousBase=process.env.PLOW_API_BASE,previousToken=process.env.PLOW_AGENT_TOKEN;
+ process.env.PLOW_API_BASE=base;process.env.PLOW_AGENT_TOKEN='cloud-only-token';process.env.PUPPETEER_STATE_DIR=directory;
+ const tools=[],hooks=new Map();globalThis.__puppeteerRequests=requests;
+ registerPuppeteer({on:(name,fn)=>hooks.set(name,fn),registerTool:f=>tools.push(f),logger:{info(){},warn(){}}});
+ bindPuppeteerTurn('gate-owner',owner);bindPuppeteerTurn('gate-guest',guest);
+ try {
+  assert.equal(await hooks.get('before_prompt_build')({}, {channel:'plow',accountId:'chat',trigger:'user',runId:'gate-guest',sessionKey:guest.session}),undefined);
+  for(const scope of [{channel:'email'},{accountId:'email'},{trigger:'cron'},{senderId:'guest'},{chatId:'cht_group'}])
+   assert.equal(await hooks.get('before_prompt_build')({}, {channel:'plow',accountId:'chat',trigger:'user',sessionKey:owner.session,...scope}),undefined);
+  const first=await hooks.get('before_prompt_build')({}, {channel:'plow',accountId:'chat',trigger:'user',runId:'gate-owner',sessionKey:owner.session});
+  assert.match(first.prependContext,/SETUP_NEEDED/);assert.equal(wire.length,0);
+  responses.push(completed({pairing_prepared:true}),{bytes:1},completed({configured:true,chats:['cht_owner','cht_group']}));
+  await requests.setup(owner,{action:'share',target:'sam/main:Boss',project:'sam/demo:coder',workers:4,group:'cht_group'});
+  const configured=await hooks.get('before_prompt_build')({}, {channel:'plow',accountId:'chat',trigger:'user',runId:'gate-owner',sessionKey:owner.session});
+  assert.match(configured.prependContext,/CONFIGURED/);assert.match(configured.prependContext,/without repeating onboarding/);
+  const {writeFile}=await import('node:fs/promises');await writeFile(join(directory,'f'.repeat(32)+'.json'),'{broken');
+  const unavailable=await hooks.get('before_prompt_build')({}, {channel:'plow',accountId:'chat',trigger:'user',runId:'gate-owner',sessionKey:owner.session});
+  assert.match(unavailable.prependContext,/could not be checked/);assert.match(unavailable.prependContext,/Do not claim/);
+ } finally {
+  endPuppeteerTurn('gate-owner');endPuppeteerTurn('gate-guest');delete process.env.PUPPETEER_STATE_DIR;
+  if(previousBase===undefined)delete process.env.PLOW_API_BASE;else process.env.PLOW_API_BASE=previousBase;
+  if(previousToken===undefined)delete process.env.PLOW_AGENT_TOKEN;else process.env.PLOW_AGENT_TOKEN=previousToken;
+ }
+});
+test('read-only status and explicit resume use fixed owner-only Mac commands',async()=>{
+ responses.push(completed({connection_checked:true,configured:true,paused:true}));
+ const status=await requests.setup(owner,{action:'status'});assert.equal(status.connection_checked,true);assert.equal(status.paused,true);
+ assert.deepEqual(wire[0].arguments.argv,['puppeteer-bridge','status']);assert.equal(wire[0].arguments.network,false);
+ assert.equal(wire[0].arguments.write_paths,undefined);
+ sources.push({uid:'msg_resume',chat_uid:owner.chat,direction:'inbound',body:'Resume the demo',sender:{type:'member',uid:'mem_owner'},created_at:new Date().toISOString()});
+ responses.push(completed({resumed:true}));const resumed=await requests.setup({...owner,message:'msg_resume',prompt:'Resume the demo'},{action:'resume'});
+ assert.equal(resumed.resumed,true);assert.deepEqual(wire[1].arguments.argv,['puppeteer-bridge','resume']);assert.equal(wire[1].arguments.network,false);
+ await assert.rejects(requests.setup(guest,{action:'resume'}),/owner_main_dm_required/);
 });

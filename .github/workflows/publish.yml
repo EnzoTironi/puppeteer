@@ -64,8 +64,12 @@ jobs:
             test "$AGENT_ID" = puppeteer
             test "$AGENT_RUNTIME" = OpenClaw
             test "$PLOW_THREAD_TRUST" = untrusted
-            test "$PLOW_GUEST_TOOLS" = puppeteer_agents,puppeteer_ask,puppeteer_result
-            node --check /opt/plow/plugin/dist/puppeteer.js
+            test "$PLOW_GUEST_TOOLS" = puppeteer_agents,puppeteer_ask,puppeteer_result,puppeteer_ask_owner
+            node --check /opt/puppeteer/plugin/puppeteer.js
+            node --check /opt/puppeteer/plugin/index.js
+            test -s /opt/puppeteer/boot/preboot.ts
+            test -s /opt/puppeteer/scripts/recover.mjs
+            test -s /usr/share/licenses/puppeteer/Meetly-MIT.txt
             test -s /opt/plow/prompt/AGENTS.md
             test -s /opt/plow/skills/puppeteer/SKILL.md
             test -s /usr/share/licenses/puppeteer/LICENSE
@@ -94,6 +98,10 @@ jobs:
         run: |
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           docker run --rm --entrypoint /opt/plow/probe "ghcr.io/$owner/puppeteer-openclaw:$GITHUB_SHA"
+      - name: Verify custom preboot, persistent preferences and restart refresh
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          docker run --rm --network none -v "$PWD/tests/preboot.test.mjs:/tmp/preboot.test.mjs:ro" --entrypoint node "ghcr.io/$owner/puppeteer-openclaw:$GITHUB_SHA" --test /tmp/preboot.test.mjs
       - name: Push public image candidate
         if: inputs.push_image
         run: |

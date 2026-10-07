@@ -1,0 +1,7 @@
+{
+  "name": "@puppeteer/openclaw-plugin",
+  "version": "0.1.4",
+  "private": true,
+  "type": "module",
+  "openclaw": { "extensions": ["./index.js"] }
+}
