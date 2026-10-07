@@ -135,6 +135,18 @@ class TeamTest(unittest.TestCase):
         self.assertIsNone(self.team.claim())
         self.assertEqual(self.bridge.result("cht_group", second["request"])["status"], "queued")
 
+    def test_status_poll_does_not_start_a_coordinator_but_new_tasks_do(self):
+        first = self.ask(1)
+        self.kick.stop()
+        with patch("puppeteer_bridge.team.subprocess.Popen") as launch:
+            for _ in range(3):
+                self.assertEqual(self.bridge.result("cht_group", first["request"])["status"], "queued")
+            launch.assert_not_called()
+            self.ask(2)
+            launch.assert_called_once()
+        self.assertIsNotNone(self.team.claim())
+
+
     def test_followups_continue_only_the_same_participants_completed_work(self):
         first, other = self.ask(1, "alice"), self.ask(2, "bob")
         alice, bob = self.team.claim(), self.team.claim()

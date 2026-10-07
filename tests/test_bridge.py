@@ -200,8 +200,8 @@ class BridgeTest(unittest.TestCase):
         self.dispatch.assert_not_called()
         self.messages[0]["body"] = original
 
-    def test_empty_prompt_does_not_dispatch(self):
-        for body in ["/prompt", "/prompt ", "/prompt\n\t"]:
+    def test_empty_prompt_or_bare_help_question_does_not_dispatch(self):
+        for body in ["/prompt", "/prompt ", "/prompt\n\t", "/prompt what?", "/prompt WHAT", "/prompt What can you do?"]:
             with self.subTest(body=body), self.assertRaisesRegex(BridgeError, "prompt_text_required"):
                 self.messages[0]["body"] = body
                 self.ask()

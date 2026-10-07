@@ -10,7 +10,7 @@ export type PromptCommand =
 
 export function promptCommand(prompt: string): PromptCommand {
   const text = prompt.replace(/^\/prompt(?:[ \t\r\n]+|$)/, "").trim();
-  if (!text || /^(help|what can you do\??)$/i.test(text)) return { kind: "help" };
+  if (!text || /^(help|what(?: can you do)?)\??$/i.test(text)) return { kind: "help" };
   if (/^(agents|list (?:the )?shared (?:coding )?agents)[.!?]?$/i.test(text)) return { kind: "agents" };
   const status = /^status\s+#?([a-f0-9]{8}|[a-f0-9]{32})(?:\s+(full))?$/i.exec(text);
   if (status?.[1]) return { kind: "status", request: status[1].toLowerCase(), full: status[2] !== undefined };
@@ -64,7 +64,7 @@ export function publicReply(result: Record<string, unknown>, turn: Turn): string
     case "pending": case "running": return wrap("I'm still waiting for your coding reply." + resume);
     case "delivery_unknown": return wrap("I couldn't confirm delivery. It may already be running, so I won't resend it." + resume);
     case "not_ready": return wrap(alias + " didn't accept this task. The owner should check the session in MyPlow before you try again.");
-    case "send_failed": return wrap("MyPlow reported a send failure. I haven't confirmed execution and won't automatically resend this task.");
+    case "send_failed": return wrap("Your task couldn't reach a coding worker. The Mac owner needs to check MyPlow and Latch. I haven't confirmed execution, so I won't resend it automatically.");
     case "timed_out": return wrap("This request expired after 15 minutes. I haven't confirmed a result. The owner should check the session before another task is sent.");
     case "replied": {
       if (typeof result.reply !== "string" || !result.reply.trim()) return wrap("The coding session returned an empty reply. I haven't confirmed a result.");

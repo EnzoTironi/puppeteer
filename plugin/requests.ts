@@ -166,7 +166,7 @@ export class Requests {
 
   private async command(id: string, op: Operation, argv: string[], signal?: AbortSignal): Promise<void> {
     await this.send(id, op, "plow_run_command", {
-      argv: ["puppeteer-bridge", ...argv], network: argv[0] === "ask" || argv[0] === "demo", read_paths: this.paths.read,
+      argv: ["puppeteer-bridge", ...argv], network: argv[0] === "ask" || argv[0] === "demo" || argv[0] === "stop", read_paths: this.paths.read,
       ...(argv[0] !== "agents" && argv[0] !== "discover" ? { write_paths: [...this.paths.write,
         ...(["prepare", "pair", "stop"].includes(argv[0] ?? "") ? ["~/.config/puppeteer"] : [])] } : {}),
       wait_ms: argv[0] === "result" ? 9000 : 1000, goal: `Puppeteer: ${argv[0]} in approved conversation ${op.chat}`,

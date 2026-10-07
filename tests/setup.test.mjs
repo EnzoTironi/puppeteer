@@ -188,6 +188,7 @@ test('parallel pairing keeps owner-selected Boss, project and worker limit, and 
  const stopped=await requests.setup({...owner,message:'msg_stop',prompt:'Stop the demo'},{action:'stop'});
  assert.equal(stopped.paused,true);assert.equal(stopped.cancelled,3);
  assert.deepEqual(wire.at(-1).arguments.argv,['puppeteer-bridge','stop']);
+ assert.equal(wire.at(-1).arguments.network,true);
  await assert.rejects(requests.setup(guest,{action:'stop'}),/owner_main_dm_required/);
 });
 
