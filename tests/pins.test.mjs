@@ -43,4 +43,7 @@ test('every test file runs somewhere: offline in npm test, in-image in CI', asyn
     else assert.ok(offline.includes('tests/' + name), name + ' runs in npm test');
   }
   for (const script of ['gateway-stage.mjs', 'identity-gateway.mjs']) assert.ok(workflow.includes('tests/' + script), script);
+  // The offline image runner covers the same files as the image job.
+  const offlineImage = await read('scripts/test-image-offline.mjs');
+  for (const name of [...inImage, 'gateway-stage.mjs', 'identity-gateway.mjs']) assert.ok(offlineImage.includes(`"${name}"`), name + ' runs in npm run test:image');
 });

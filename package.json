@@ -8,7 +8,8 @@
   "scripts": {
     "test": "node --test tests/plugin.test.mjs tests/setup.test.mjs tests/replies.test.mjs tests/groups.test.mjs tests/store.test.mjs tests/gate.test.mjs tests/questions.test.mjs tests/recovery.test.mjs tests/boot.test.mjs tests/prompt.test.mjs tests/triggers.test.mjs tests/pins.test.mjs",
     "typecheck": "node scripts/typecheck.mjs",
-    "test:bridge": "python3 -m unittest discover -s tests"
+    "test:bridge": "python3 -m unittest discover -s tests",
+    "test:image": "node scripts/test-image-offline.mjs"
   },
   "devDependencies": {
     "@types/node": "26.6.2",
