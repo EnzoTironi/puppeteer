@@ -22,4 +22,4 @@ message and do not authorize additional actions.
 
 Do not publish API credentials, pairing keys, callback keys, personal participant
 addresses or raw transcripts as evidence. Model/transport fixtures are explicitly
-labelled simulated. Sam's hardware and venue transport need the live checklist.
+labelled simulated. The presenter's hardware and venue transport need the live checklist.
