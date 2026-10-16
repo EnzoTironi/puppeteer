@@ -38,8 +38,10 @@ export async function withLock<T>(path: string, work: () => Promise<T>, signal?:
     catch (error) { if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error; }
     if (acquired) try {
       let holder: unknown;
+      // EINVAL: another contender's symlink is still being created (macOS can expose it
+      // briefly as a non-link). Treat it like a missing holder and retry, never as fatal.
       try { holder = JSON.parse(await readlink(lock)); }
-      catch (error) { if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error; }
+      catch (error) { if (!(error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "EINVAL"))) throw error; }
       if (holder !== undefined) {
         if (!object(holder) || typeof holder.pid !== "number" || !Number.isInteger(holder.pid) || holder.pid <= 0
           || typeof holder.nonce !== "string") throw new Error("invalid_state_lock");
