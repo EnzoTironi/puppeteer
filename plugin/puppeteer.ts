@@ -3,14 +3,15 @@ import { Latch, object } from "./latch.ts";
 import { Requests, type Setup, type Turn } from "./requests.ts";
 import { Plow } from "./plow.ts";
 import { Groups, type GroupDelivery } from "./groups.ts";
-import { publicReply } from "./replies.ts";
+import { publicReply, requestText } from "./replies.ts";
 import { setupContext, setupStatus } from "./setup.ts";
 import { Questions } from "./questions.ts";
 import { sdkOutbound } from "./outbound.ts";
 import { reconcileRecovery } from "./recovery.ts";
 
+/** An explicit request (see requestText). Everything else in a group never reaches a model or the Mac. */
 export function isPrompt(body: string | null | undefined): boolean {
-  return typeof body === "string" && /^\/prompt(?:[ \t\r\n]|$)/.test(body);
+  return requestText(body) !== undefined;
 }
 
 type BoundCall = { run: string; turn: Turn };

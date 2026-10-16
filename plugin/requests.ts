@@ -3,7 +3,7 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Latch, object } from "./latch.ts";
 import { Plow } from "./plow.ts";
-import { promptCommand } from "./replies.ts";
+import { promptCommand, requestText } from "./replies.ts";
 import { readJson, withLock, writeJson } from "./store.ts";
 import { setupStatus } from "./setup.ts";
 import { parseOperation, type Action, type Stage, type Operation } from "./operations.ts";
@@ -210,7 +210,7 @@ export class Requests {
 
   async ask(turn: Turn, alias: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
     if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(alias)) throw new Error("invalid_agent_alias");
-    if (!/^\/prompt[ \t\r\n]+\S/.test(turn.prompt)) throw new Error("prompt_text_required");
+    if (!requestText(turn.prompt)) throw new Error("prompt_text_required");
     if (promptCommand(turn.prompt).kind !== "task") throw new Error("control_request_requires_matching_tool");
     const id = createHash("sha256").update(turn.chat + "\0" + turn.message).digest("hex").slice(0, 32);
     return this.exclusive(id, async () => {

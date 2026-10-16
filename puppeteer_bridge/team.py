@@ -13,6 +13,7 @@ import time
 import uuid
 
 from .errors import BridgeError
+from .triggers import request_text
 
 
 ACTIVE = ("dispatching", "submitted", "delivery_unknown", "timed_out")
@@ -83,7 +84,7 @@ class Team:
             db.execute("INSERT INTO requests VALUES (?,?,?,?,?,?,?,?,?)", (request, chat, message, alias,
                        target, "queued", None, self.bridge.clock(), hashlib.sha256(key.encode()).hexdigest()))
             db.execute("INSERT INTO team_jobs (request,project,participant,body,reply_key) VALUES (?,?,?,?,?)",
-                       (request, self.options["project"], user, source["body"][len("/prompt"):].strip(), key))
+                       (request, self.options["project"], user, request_text(source["body"]), key))
         self.kick()
         return self.bridge.result(chat, request)
 

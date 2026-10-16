@@ -266,6 +266,20 @@ class BridgeTest(unittest.TestCase):
         self.assertIn("Only lines marked " + fences[0] + " delimit participant data", prompt[:start])
         self.assertNotIn(fences[0], forged)
 
+    def test_addressing_puppeteer_by_name_is_an_explicit_request(self):
+        self.messages[0]["body"] = "Puppeteer, explain this project's entry point."
+        self.ask()
+        prompt = self.dispatch.call_args.kwargs["input"]
+        self.assertIn("\nexplain this project's entry point.\n--- end participant message ", prompt)
+        self.assertNotIn("Puppeteer, explain", prompt)
+
+    def test_chat_that_merely_mentions_puppeteer_is_refused_on_the_mac(self):
+        for body in ["Puppeteer is wild", "Hey Puppeteer, fix it", "puppeteer fix it"]:
+            with self.subTest(body=body), self.assertRaisesRegex(BridgeError, "prompt_prefix_required"):
+                self.messages[0]["body"] = body
+                self.ask()
+        self.dispatch.assert_not_called()
+
     def test_concurrent_retries_send_once(self):
         with ThreadPoolExecutor(max_workers=4) as executor:
             receipts = list(executor.map(lambda _: self.ask(), range(4)))

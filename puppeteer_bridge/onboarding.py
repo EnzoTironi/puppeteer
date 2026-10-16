@@ -41,7 +41,7 @@ def workspace(path):
             raise BridgeError("demo_workspace_unavailable")
         return
     files = {
-        "README.md": "# Puppeteer group workspace\n\nA fresh coding project for your group. Ask Puppeteer to change it with /prompt.\n",
+        "README.md": "# Puppeteer group workspace\n\nA fresh coding project for your group. Start a message with \"Puppeteer,\" to change it.\n",
         "greeting.py": 'def greet(name):\n    return f"Hello, {name}!"\n',
         "test_greeting.py": 'import unittest\nfrom greeting import greet\n\n\nclass GreetingTest(unittest.TestCase):\n    def test_greeting(self):\n        self.assertEqual(greet("Sam"), "Hello, Sam!")\n\n\nif __name__ == "__main__":\n    unittest.main()\n',
         ".gitignore": "__pycache__/\n.DS_Store\n.env\n",

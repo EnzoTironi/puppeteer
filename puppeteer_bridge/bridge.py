@@ -24,6 +24,7 @@ import uuid
 
 from .errors import BridgeError
 from .team import Team
+from .triggers import request_text
 
 
 def myplow_config_path():
@@ -341,9 +342,9 @@ class Bridge:
                 raise ValueError()
         except (KeyError, ValueError, AttributeError):
             raise BridgeError("source_message_expired_or_invalid")
-        if not re.match(r"^/prompt(?:[ \t\r\n]|$)", body):
+        prompt = request_text(body)
+        if prompt is None:
             raise BridgeError("prompt_prefix_required")
-        prompt = body[len("/prompt"):].strip()
         if not prompt or re.fullmatch(r"(?:help|what(?: can you do)?)\??", prompt, re.IGNORECASE):
             raise BridgeError("prompt_text_required")
         return prompt
