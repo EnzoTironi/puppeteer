@@ -39,10 +39,11 @@ test('every test file runs somewhere: offline in npm test, in-image in CI', asyn
   const workflow = await read('.github/workflows/publish.yml');
   const inImage = ['preboot.test.mjs', 'group-ingress.test.mjs', 'group-load.test.mjs', 'runtime-tools.test.mjs', 'owner-dm.test.mjs'];
   for (const name of files) {
-    if (inImage.includes(name)) assert.ok(workflow.includes('tests/' + name), name + ' runs in the image job');
+    // Mounted is not enough: the image job has to execute it.
+    if (inImage.includes(name)) assert.match(workflow, new RegExp(`node [^\\n]*/tmp/${name.replaceAll('.', '\\.')}`), name + ' runs in the image job');
     else assert.ok(offline.includes('tests/' + name), name + ' runs in npm test');
   }
-  for (const script of ['gateway-stage.mjs', 'identity-gateway.mjs']) assert.ok(workflow.includes('tests/' + script), script);
+  for (const script of ['gateway-stage.mjs', 'identity-gateway.mjs']) assert.match(workflow, new RegExp(`node [^\\n]*/tmp/${script.replaceAll('.', '\\.')}`), script);
   // The offline image runner covers the same files as the image job.
   const offlineImage = await read('scripts/test-image-offline.mjs');
   for (const name of [...inImage, 'gateway-stage.mjs', 'identity-gateway.mjs']) assert.ok(offlineImage.includes(`"${name}"`), name + ' runs in npm run test:image');
