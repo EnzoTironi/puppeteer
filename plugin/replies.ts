@@ -62,6 +62,7 @@ export function publicReply(result: Record<string, unknown>, turn: Turn): string
     case "cancelled": return wrap("The owner cancelled this request. Any work already done stays available for the owner to review.");
     case "queued": return wrap("Queued for a separate coding worker." + (turn.background ? " I'll post its reply here when it arrives." : "") + resume);
     case "queue_full": return wrap("The task queue is full. I didn't accept this task. Please try a new /prompt after some replies arrive.");
+    case "participant_queue_full": return wrap("You already have 3 tasks waiting here. I didn't accept this one. Send it again after one of your replies arrives.");
     case "busy": return wrap("An earlier request has this session reserved. I didn't send this task. Wait for its reply, then send your /prompt again.");
     case "awaiting_approval": return wrap("Waiting for the Mac owner to approve this operation in Latch." + resume);
     case "submitted": return wrap(alias + " accepted your task. I'm waiting for its reply." + resume);

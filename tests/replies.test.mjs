@@ -63,5 +63,6 @@ test('display names cannot create extra lines and empty replies cannot report su
 test('parallel queue states never pretend to be running or completed',()=>{
  const queued=publicReply({...receipt,status:'queued'},turn); assert.match(queued,/Queued for a separate coding worker/); assert.match(queued,/status a1234567/); assert.doesNotMatch(queued,/tests? passed|completed|running/i);
  const full=publicReply({status:'queue_full'},turn); assert.match(full,/didn't accept this task/); assert.doesNotMatch(full,/will.*reply/i);
+ const mine=publicReply({agent:'coder',status:'participant_queue_full'},turn); assert.match(mine,/3 tasks waiting/); assert.match(mine,/didn't accept this one/); assert.doesNotMatch(mine,/queued for|accepted your task/i);
  assert.match(publicReply({agents:[{alias:'coder',backend:'codex'}],mode:'parallel',workers:4},turn),/up to 4 separate workers/);
 });

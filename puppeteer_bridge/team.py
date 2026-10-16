@@ -16,6 +16,9 @@ from .errors import BridgeError
 
 
 ACTIVE = ("dispatching", "submitted", "delivery_unknown", "timed_out")
+# Tasks one participant may have waiting in one conversation. The shared queue
+# holds 256, so without this a single guest could fill it for everyone.
+PARTICIPANT_QUEUE = 3
 
 
 class Team:
@@ -72,6 +75,11 @@ class Team:
             pending = db.execute("SELECT COUNT(*) FROM requests WHERE target=? AND status='queued'", (target,)).fetchone()[0]
             if pending >= 256:
                 return {"agent": alias, "status": "queue_full"}
+            waiting = db.execute("""SELECT COUNT(*) FROM requests r JOIN team_jobs j ON j.request=r.id
+                WHERE r.target=? AND r.chat=? AND j.participant=? AND r.status='queued' AND r.created>=?""",
+                (target, chat, user, self.bridge.clock() - 900)).fetchone()[0]
+            if waiting >= PARTICIPANT_QUEUE:
+                return {"agent": alias, "status": "participant_queue_full"}
             db.execute("INSERT INTO requests VALUES (?,?,?,?,?,?,?,?,?)", (request, chat, message, alias,
                        target, "queued", None, self.bridge.clock(), hashlib.sha256(key.encode()).hexdigest()))
             db.execute("INSERT INTO team_jobs (request,project,participant,body,reply_key) VALUES (?,?,?,?,?)",

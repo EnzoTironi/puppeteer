@@ -40,7 +40,7 @@ function bridgeValue(stdout: string): Record<string, unknown> {
       return { alias: row.alias, backend: row.backend, status: row.status };
     }), ...(value.mode === "parallel" && typeof value.workers === "number" ? { mode: "parallel", workers: value.workers } : {}) };
   }
-  if (["busy", "queue_full"].includes(String(value.status)) && typeof value.agent === "string") return { status: value.status, agent: value.agent };
+  if (["busy", "queue_full", "participant_queue_full"].includes(String(value.status)) && typeof value.agent === "string") return { status: value.status, agent: value.agent };
   if (typeof value.request !== "string" || !/^[a-f0-9]{32}$/.test(value.request) || typeof value.agent !== "string" || !["queued", "dispatching", "submitted", "delivery_unknown", "replied", "not_ready", "send_failed", "timed_out", "cancelled"].includes(String(value.status))) throw new Error("invalid_bridge_response");
   if (value.status === "replied" && typeof value.reply !== "string") throw new Error("invalid_bridge_response");
   return { request: value.request, agent: value.agent, status: value.status, ...(value.status === "replied" ? { reply: value.reply } : {}) };
