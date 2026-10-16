@@ -9,10 +9,14 @@ import { withLock, writeJson } from "./store.ts";
 import type { Questions } from "./questions.ts";
 
 type Delivery = "new" | "sending" | "sent" | "uncertain";
+const ownerNotSetUpInDm = "I'm not connected to your Mac yet. Say \"Set up Puppeteer on my Mac\" and I'll do it.";
+const ownerPausedInDm = "Puppeteer is paused. Say \"Resume the demo\" and I'll take tasks again.";
+const ownerQuestionInDm = "Group members use that to reach you privately. Here, just tell me what you need.";
 type Job = { turn: Turn; created: number; announcement: Delivery; approval: Delivery; final: Delivery };
 export type GroupDelivery = (chat: string, text: string) => Promise<unknown>;
 
-/** The channel owns these fixed receipt operations. Audience text never selects a tool or route. */
+/** The channel owns these fixed receipt operations for groups and for the owner's own /prompt
+ * messages in their DM. Audience text never selects a tool or route. */
 export class Groups {
   private readonly running = new Set<string>();
   private readonly receiving = new Set<string>();
@@ -87,7 +91,7 @@ export class Groups {
       let result: Record<string, unknown>;
       try {
         result = await this.limited(async () => {
-          await this.plow.group(turn, signal);
+          await this.plow.room(turn, signal);
           return job.announcement === "new" && Date.now() - job.created < 900_000
             ? this.requests.ask(turn, "coder", signal) : this.requests.result(turn, id, signal, 0);
         });
@@ -142,6 +146,16 @@ export class Groups {
     signal.throwIfAborted();
     turn = { ...turn, assertCurrent() { signal.throwIfAborted(); } };
     const command = promptCommand(turn.prompt);
+    if (turn.direct) {
+      if (command.kind === "owner_question") { await send(turn.chat, ownerQuestionInDm); return; }
+      if (command.kind !== "help") {
+        try { await this.requests.shared(turn.chat); }
+        catch (error) {
+          await send(turn.chat, error instanceof Error && error.message === "demo_paused" ? ownerPausedInDm : ownerNotSetUpInDm);
+          return;
+        }
+      }
+    }
     if (command.kind === "help") { await send(turn.chat, promptHelp); return; }
     if (command.kind === "invalid_status") { await send(turn.chat, "Use /prompt status REQUEST_ID with the ID from the original reply."); return; }
     if (command.kind === "invalid_question") { await send(turn.chat, "Use /prompt ask owner followed by your question, up to 500 characters."); return; }

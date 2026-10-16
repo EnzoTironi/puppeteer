@@ -8,8 +8,8 @@ import { readJson, withLock, writeJson } from "./store.ts";
 import { setupStatus } from "./setup.ts";
 import { parseOperation, type Action, type Stage, type Operation } from "./operations.ts";
 
-export type Turn = { chat: string; message: string; session: string; prompt: string; sender?: string; background?: boolean; owner?: boolean; assertCurrent?: () => void; recordReply?: (result: Record<string, unknown>) => void };
-export type Setup = { action: "install" | "inspect" | "groups" | "stop" | "resume" | "status" } | { action: "demo"; group: string; target?: string }
+export type Turn = { chat: string; message: string; session: string; prompt: string; sender?: string; background?: boolean; owner?: boolean; direct?: boolean; assertCurrent?: () => void; recordReply?: (result: Record<string, unknown>) => void };
+export type Setup = { action: "install" | "inspect" | "groups" | "stop" | "resume" | "status" } | { action: "demo"; group?: string; target?: string }
   | { action: "share"; target: string; group?: string; project?: string; workers?: number };
 
 function bridgeValue(stdout: string): Record<string, unknown> {
@@ -170,17 +170,19 @@ export class Requests {
     if ((input.action === "share" || input.action === "demo") && input.target !== undefined
       && !/^[A-Za-z0-9_-]{1,128}\/[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$/.test(input.target)) throw new Error("invalid_local_agent_id");
     if (input.action === "demo") await this.plow.share(turn, input.group, signal);
+    // A demo without a group is keyed to this owner DM; the connector only uses the uid as a workspace key.
+    const demoGroup = input.action === "demo" ? input.group ?? turn.chat : undefined;
     const chats = input.action === "share" ? await this.plow.share(turn, input.group, signal) : [];
     const id = createHash("sha256").update("setup\0" + turn.chat + "\0" + turn.message + "\0" + input.action).digest("hex").slice(0, 32);
     return this.exclusive(id, async () => {
       const previous = await this.read(id);
       if (previous) {
-        if (previous.action.kind === "demo" && (input.action !== "demo" || previous.action.group !== input.group || previous.action.target !== input.target)) throw new Error("setup_message_already_used");
+        if (previous.action.kind === "demo" && (input.action !== "demo" || previous.action.group !== demoGroup || previous.action.target !== input.target)) throw new Error("setup_message_already_used");
         if (previous.action.kind === "share" && (input.action !== "share" || previous.action.target !== input.target || previous.action.group !== input.group || previous.action.project !== input.project || previous.action.workers !== (input.project ? input.workers ?? 4 : undefined))) throw new Error("setup_message_already_used");
         return this.view(id, previous);
       }
       const action: Action = input.action === "share" ? { kind: "share", target: input.target, group: input.group, project: input.project, workers: input.project ? input.workers ?? 4 : undefined, chats, phase: "prepare" }
-        : input.action === "demo" ? { kind: "demo", group: input.group, target: input.target }
+        : input.action === "demo" ? { kind: "demo", group: demoGroup ?? turn.chat, target: input.target }
           : input.action === "install" ? { kind: "install" } : input.action === "stop" ? { kind: "stop" }
             : input.action === "resume" ? { kind: "resume" } : input.action === "status" ? { kind: "status" } : { kind: "inspect" };
       const op: Operation = { chat: turn.chat, message: turn.message, created: Date.now(), action, stage: { kind: "unknown", error: "not_started" }, guard: turn.assertCurrent };
@@ -194,7 +196,7 @@ export class Requests {
         }, signal);
       } else await this.command(id, op, input.action === "inspect" ? ["discover"] : input.action === "stop" ? ["stop"]
         : input.action === "resume" ? ["resume"] : input.action === "status" ? ["status"]
-        : input.action === "demo" ? ["demo", "--group", input.group, ...(input.target ? ["--boss", input.target] : [])]
+        : input.action === "demo" ? ["demo", "--group", demoGroup ?? turn.chat, ...(input.target ? ["--boss", input.target] : [])]
           : ["prepare", "--request", id], signal);
       await this.advance(id, op, signal);
       return this.view(id, op);

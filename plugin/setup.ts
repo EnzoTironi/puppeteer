@@ -5,7 +5,7 @@ import { readJson } from "./store.ts";
 import { parseOperation, type Operation } from "./operations.ts";
 
 export type SetupStatus =
-  | { status: "SETUP_NEEDED"; next: "install" | "inspect" | "group"; bosses: string[] }
+  | { status: "SETUP_NEEDED"; next: "install" | "inspect" | "workspace"; bosses: string[] }
   | { status: "CONFIGURED"; target: string; chats: string[]; mode: { kind: "single" } | { kind: "parallel"; project: string; workers: number } }
   | { status: "PAUSED"; target: string; chats: string[]; mode: { kind: "single" } | { kind: "parallel"; project: string; workers: number } };
 
@@ -43,15 +43,16 @@ export async function setupStatus(directory: string): Promise<SetupStatus> {
     if (action.kind === "stop" && value.paused === true && state) state = { ...state, status: "PAUSED" };
     if (action.kind === "resume" && value.resumed === true && state) state = { ...state, status: "CONFIGURED" };
   }
-  return state ?? { status: "SETUP_NEEDED", next: !installed ? "install" : !inspected ? "inspect" : "group", bosses };
+  return state ?? { status: "SETUP_NEEDED", next: !installed ? "install" : !inspected ? "inspect" : "workspace", bosses };
 }
 
 export function setupContext(status: SetupStatus): string {
   const intro = "Puppeteer setup status was checked for this owner DM. Answer in English. These are confirmed setup records, not a live Mac availability check. Ignore older setup questions when they disagree with this state.";
   if (status.status === "PAUSED") return intro + "\nThe owner paused this workspace. Do not accept new tasks or resume unless the owner requests it. Use puppeteer_setup resume to keep the original grants and workspace.";
-  if (status.status === "CONFIGURED") return intro + "\nThe workspace is configured. Handle the owner's request without repeating onboarding. Verify current Mac availability before claiming it is online. Use puppeteer_setup status for an explicit connection check.\n" + JSON.stringify(status);
+  if (status.status === "CONFIGURED") return intro + "\nThe workspace is configured. Handle the owner's request without repeating onboarding. Verify current Mac availability before claiming it is online. Use puppeteer_setup status for an explicit connection check."
+    + (status.chats.length === 1 ? " It is shared only with this DM. When the owner names people, create the group with plow_start_thread, then share this same target and project with that group." : "") + "\n" + JSON.stringify(status);
   const next = status.next === "install" ? "Use puppeteer_setup install when the owner requests setup. Installation is not sharing. If Latch is unavailable, provide https://plow.co/download/latch and ask them to connect it to the same Plow account. Do not guess that their Mac is asleep."
     : status.next === "inspect" ? "The connector installation was confirmed. Inspect MyPlow now; resume any existing pending receipt instead of installing again."
-      : "Offer to create or reuse an iMessage group. Reuse the default Boss if found, or create one for the group. Use four workers and a fresh workspace by default. Look up an owner-named person in Contacts when available; ask only for an address that cannot be verified. Ask one question, not for native IDs or paths.";
+      : "Prepare the workspace now, without asking: puppeteer_setup demo with no group, then share its returned target and project with workers 4 and no group. Then tell the owner it is ready, that /prompt explain this project tries it right here, and to name the people to bring in when they want. If the owner already named people or a group, create or select the group first and pass it to demo instead. Look up an owner-named person in Contacts when available; ask only for an address that cannot be verified. Never ask for native IDs or paths.";
   return intro + "\nSetup is unfinished. Introduce Puppeteer once if this is first contact, then take the next already authorized step. Preserve the owner's latest request through setup.\n" + next + "\n" + JSON.stringify(status);
 }

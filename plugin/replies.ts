@@ -16,6 +16,11 @@ export type PromptCommand =
 const SLASH_TRIGGER = /^\/prompt(?=[ \t\r\n]|$)/;
 const NAME_TRIGGER = /^(?:@puppeteer(?=[ \t\r\n,:]|$)[,:]?|puppeteer[,:]|puppeteer\?$)/i;
 
+/** Only "/prompt": in the owner's DM a name ("Puppeteer, pause the demo") is conversation, not a task. */
+export function isSlashPrompt(body: unknown): boolean {
+  return typeof body === "string" && SLASH_TRIGGER.test(body);
+}
+
 /** The request text after the trigger, or undefined for ordinary chat. */
 export function requestText(body: unknown): string | undefined {
   if (typeof body !== "string") return undefined;

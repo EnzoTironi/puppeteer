@@ -37,7 +37,7 @@ test('every test file runs somewhere: offline in npm test, in-image in CI', asyn
   const files = (await readdir(new URL('./', import.meta.url))).filter(name => name.endsWith('.test.mjs'));
   const offline = JSON.parse(await read('package.json')).scripts.test;
   const workflow = await read('.github/workflows/publish.yml');
-  const inImage = ['preboot.test.mjs', 'group-ingress.test.mjs', 'group-load.test.mjs', 'runtime-tools.test.mjs'];
+  const inImage = ['preboot.test.mjs', 'group-ingress.test.mjs', 'group-load.test.mjs', 'runtime-tools.test.mjs', 'owner-dm.test.mjs'];
   for (const name of files) {
     if (inImage.includes(name)) assert.ok(workflow.includes('tests/' + name), name + ' runs in the image job');
     else assert.ok(offline.includes('tests/' + name), name + ' runs in npm test');
