@@ -13,6 +13,7 @@ import time
 import uuid
 
 from .errors import BridgeError
+from .review import snapshot_tree
 from .triggers import request_text
 
 
@@ -150,6 +151,15 @@ class Team:
                 shutil.copy2(source, destination)
         return workspace
 
+    def record_base(self, request, cwd):
+        """Remember what the worktree held before the worker, so review shows only its changes."""
+        try:
+            base = snapshot_tree(cwd, self.bridge.state / "review")
+        except BridgeError:
+            return  # Review falls back to the worktree's HEAD; the task itself is unaffected.
+        with self.bridge.ledger() as db:
+            db.execute("UPDATE team_jobs SET base_tree=? WHERE request=?", (base, request))
+
     def continuation(self, job, original):
         with self.bridge.ledger() as db:
             previous = db.execute("""SELECT r.id,r.reply,j.body FROM requests r JOIN team_jobs j ON j.request=r.id
@@ -173,6 +183,7 @@ class Team:
             project, backend = self.validate(self.bridge, job["target"], self.options)
             project, context = self.continuation(job, project)
             cwd = self.workspace(job["id"], project)
+            self.record_base(job["id"], cwd)
             if self.bridge.config() != self.config:
                 raise BridgeError("parallel_configuration_changed")
             spawned = subprocess.run([str(self.bridge.install / "bin/mp"), "spawn", job["worker"],

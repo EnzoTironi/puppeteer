@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test, before, after, beforeEach } from 'node:test';
 import { createServer } from 'node:http';
-import { createHmac } from 'node:crypto';
-import { mkdtemp, readFile, rm, readdir, stat } from 'node:fs/promises';
+import { createHash, createHmac } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, rm, readdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Latch } from '../plugin/latch.ts';
@@ -227,6 +227,49 @@ test('value first: without a group the workspace is prepared for the owner DM, t
  const withGroup=await requests.setup(later,{action:'share',target:prepared.target,project:prepared.project,workers:4,group:'cht_group'});
  assert.deepEqual(withGroup.chats.toSorted(),[owner.chat,'cht_group'].toSorted());
  assert.doesNotMatch(setupContext(await setupStatus(directory)),/shared only with this DM/);
+});
+
+test('owner review lists finished changes with who asked, and keeps one only by its ID',async()=>{
+ const alice='ab'.repeat(16),bob='cd'.repeat(16);
+ const say=(message,prompt)=>{sources.push({uid:message,chat_uid:owner.chat,direction:'inbound',body:prompt,sender:{type:'member',uid:'mem_owner'},created_at:new Date().toISOString()});return {...owner,message,prompt};};
+ // This agent's own record of Alice's group request: cloud op (ask) and its group job with her name.
+ const op=createHash('sha256').update('cht_group\0msg_alice').digest('hex').slice(0,32);
+ await writeFile(join(directory,op+'.json'),JSON.stringify({chat:'cht_group',message:'msg_alice',created:Date.now(),action:{kind:'ask',alias:'coder'},stage:{kind:'done',value:{request:alice,agent:'coder',status:'replied'}}}));
+ await mkdir(join(directory,'groups'),{recursive:true});
+ await writeFile(join(directory,'groups',op+'.json'),JSON.stringify({turn:{chat:'cht_group',message:'msg_alice',session:'s',prompt:'Puppeteer, make it blue',sender:'Alice\u0007'},created:Date.now(),announcement:'sent',approval:'new',final:'sent'}));
+ responses.push(completed({changes:[{request:alice,task:'make it blue',kept:false,files:2,insertions:5,deletions:1},{request:bob,task:'fix the test',kept:true,branch:'puppeteer/cdcdcdcd'}]}));
+ const listed=await requests.setup(owner,{action:'changes'});
+ assert.deepEqual(wire.at(-1).arguments.argv,['puppeteer-bridge','changes']);
+ assert.equal(wire.at(-1).arguments.network,false);
+ assert.deepEqual(listed.changes,[{request:'abababab',task:'make it blue',kept:false,files:2,insertions:5,deletions:1,asked_by:'Alice'},
+  {request:'cdcdcdcd',task:'fix the test',kept:true,branch:'puppeteer/cdcdcdcd'}]);
+ responses.push(completed({kept:true,branch:'puppeteer/abababab',commit:'0123456789abcdef',files:2,insertions:5,deletions:1}));
+ const kept=await requests.setup(say('msg_keep','Keep abababab'),{action:'keep',request:'abababab'});
+ assert.deepEqual(wire.at(-1).arguments.argv,['puppeteer-bridge','keep','--request','abababab']);
+ assert.deepEqual({branch:kept.branch,commit:kept.commit},{branch:'puppeteer/abababab',commit:'0123456789ab'});
+ // Malformed connector output is never shown as a result.
+ for(const bad of [{changes:[{request:'not-hex',task:'x',kept:false,files:1,insertions:1,deletions:0}]},
+   {changes:[{request:alice,task:'x',kept:true,branch:'main'}]},{changes:[{request:alice,task:'x',kept:false,files:-1,insertions:0,deletions:0}]},
+   {kept:true,branch:'puppeteer/../../main',commit:'0123456'}]) {
+  responses.push(completed(bad));
+  const result=await requests.setup(say('msg_bad_'+wire.length,'What is waiting?'),{action:'changes'});
+  assert.equal(result.status,'delivery_unknown',JSON.stringify(bad));
+ }
+ await assert.rejects(requests.setup(guest,{action:'changes'}),/owner_main_dm_required/);
+ await assert.rejects(requests.setup(guest,{action:'keep',request:'abababab'}),/owner_main_dm_required/);
+});
+
+test('the owner setup tool accepts keep only with an exact request ID',async()=>{
+ const tools=[],hooks=new Map();globalThis.__puppeteerRequests=requests;
+ registerPuppeteer({on:(n,f)=>hooks.set(n,f),registerTool:f=>tools.push(f)});
+ const factory=tools.find(f=>f.create({}).name==='puppeteer_setup');
+ const ctx={messageChannel:'plow',agentAccountId:'chat',nativeChannelId:owner.chat,requesterSenderId:'plow-owner',senderIsOwner:true,sessionKey:owner.session,assertInvocationCurrent:()=>{}};
+ bindPuppeteerTurn('run-keep',owner);
+ for(const args of [{action:'keep'},{action:'keep',request:'abc'},{action:'keep',request:'abababab; rm -rf'},{action:'keep',request:'abababab',target:'x/y:z'},{action:'changes',request:'abababab'},{action:'changes',path:'/'}]) {
+  hooks.get('before_tool_call')({toolName:'puppeteer_setup',toolCallId:'call-keep',runId:'run-keep'},{sessionKey:owner.session});
+  assert.equal((await factory.create(ctx).execute('call-keep',args)).isError,true,JSON.stringify(args));
+ }
+ endPuppeteerTurn('run-keep');assert.equal(wire.length,0);
 });
 
 test('demo creation resumes its original Latch job across restart and verifies the group again',async()=>{

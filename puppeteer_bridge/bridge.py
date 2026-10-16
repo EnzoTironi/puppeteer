@@ -22,6 +22,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
+from . import review
 from .errors import BridgeError
 from .team import Team
 from .triggers import request_text
@@ -251,6 +252,13 @@ class Bridge:
                     body TEXT NOT NULL, reply_key TEXT NOT NULL, worker TEXT NOT NULL DEFAULT '',
                     finished REAL NOT NULL DEFAULT 0, closed INTEGER NOT NULL DEFAULT 0)""")
                 connection.execute("CREATE INDEX IF NOT EXISTS requests_target_status ON requests(target,status)")
+                # Added for owner review; ledgers from earlier releases gain the column in place.
+                if "base_tree" not in {row[1] for row in connection.execute("PRAGMA table_info(team_jobs)")}:
+                    try:
+                        connection.execute("ALTER TABLE team_jobs ADD COLUMN base_tree TEXT NOT NULL DEFAULT ''")
+                    except sqlite3.OperationalError:
+                        if "base_tree" not in {row[1] for row in connection.execute("PRAGMA table_info(team_jobs)")}:
+                            raise
                 yield connection
         finally:
             connection.close()
@@ -551,6 +559,10 @@ def main(argv=None, cfg=None):
     commands.add_parser("stop", help="Owner: pause the parallel demo, cancel waiting work and retire its workers")
     commands.add_parser("resume", help="Owner: resume the same workspace and grants without replaying cancelled work")
     commands.add_parser("status", help="Owner: check the connector and pairing without starting workers")
+    changes = commands.add_parser("changes", help="Owner: finished tasks whose worktrees hold changes, newest first")
+    changes.add_argument("--limit", type=int, choices=range(1, 21), default=10, metavar="1..20")
+    keep = commands.add_parser("keep", help="Owner: save one finished task's changes as branch puppeteer/<id>")
+    keep.add_argument("--request", required=True)
     prepare = commands.add_parser("prepare", help="Owner: prepare a private pairing file")
     prepare.add_argument("--request", required=True)
     pair = commands.add_parser("pair", help="Owner: consume a private pairing file")
@@ -600,6 +612,10 @@ def main(argv=None, cfg=None):
             value = bridge.resume()
         elif args.command == "status":
             value = bridge.status()
+        elif args.command == "changes":
+            value = review.changes(bridge, args.limit)
+        elif args.command == "keep":
+            value = review.keep(bridge, args.request)
         elif args.command == "prepare":
             value = bridge.prepare(args.request)
         elif args.command == "pair":
