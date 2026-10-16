@@ -18,6 +18,7 @@ import urllib.error
 from unittest.mock import patch
 
 from puppeteer_bridge.bridge import Bridge, BridgeError
+from hermetic import isolate as setUpModule, restore as tearDownModule
 
 
 class BridgeTest(unittest.TestCase):

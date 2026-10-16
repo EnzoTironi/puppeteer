@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from puppeteer_bridge.bridge import Bridge, load_myplow_config, main, myplow_config_path
+from hermetic import isolate as setUpModule, restore as tearDownModule
 
 
 class StandaloneTest(unittest.TestCase):
