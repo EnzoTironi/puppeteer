@@ -2,7 +2,7 @@ name: Test and publish Puppeteer
 
 on:
   push:
-    branches: [feat/openclaw-agent]
+    branches: [main]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -18,11 +18,15 @@ permissions:
 jobs:
   bridge:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # macOS ships Python 3.9, and pyproject.toml promises >=3.9 for the Mac connector.
+        python: ['3.9', '3.12']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: ${{ matrix.python }}
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -33,6 +37,15 @@ jobs:
           npm run typecheck
       - name: Test connector without installing MyPlow
         run: python3 -m unittest discover -s tests -v
+      - name: Test connector from inside a simulated MyPlow session
+        # Owners run the suite in MyPlow panes, which export these. Results must not change.
+        env:
+          AGENT_ID: ci-host/main:eng-1
+          BOSS_ID: ci-host/main:Boss
+          MYPEOPLE_CONFIG_PATH: /nonexistent/queue.env
+          MYPEOPLE_HOME: /nonexistent
+          PUPPETEER_CONFIG: /nonexistent/bridge.json
+        run: python3 -m unittest discover -s tests
       - name: Verify standalone package
         run: |
           python3 -m pip install .
