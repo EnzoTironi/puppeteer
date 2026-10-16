@@ -37,6 +37,18 @@ group. Automated gateway fixtures simulate phone transport and native workers.
 15. Ask privately to "Upgrade the Mac connector" and confirm the installed
     connector commit matches the image's `PUPPETEER_BRIDGE_COMMIT`.
 
+16. Fresh owner: "Set up Puppeteer on my Mac" ends with "Try it here: /prompt
+    explain this project" without asking for a person. The DM /prompt gets a
+    receipt, then the reply on its own. "Puppeteer, pause the demo" in the DM
+    gets a normal answer, not a coding task.
+17. In the group: "Puppeteer, explain the project" runs; "Puppeteer is great"
+    and "Hey Puppeteer, …" stay silent. With the old connector still installed,
+    a "Puppeteer," task gets the "use /prompt or upgrade" reply.
+18. After two people finish tasks with edits, "What's waiting?" in the DM lists
+    both with names and sizes. "Keep ID" creates `puppeteer/ID` in the project;
+    `git status` and `git log -1` in the project are unchanged. Keep it again:
+    same commit.
+
 Record the exact candidate digest, actual device/account/group, screenshots,
 receipt IDs, local test output and any failure. Venue verification is incomplete
 until these physical transport checks pass on the presenter's Mac.

@@ -27,6 +27,18 @@ the way you would treat a public API on the owner's machine.
     model arguments.
   - Block any change that lets a group turn reach another tool, or lets a tool
     accept a chat, message, path, command or replacement text from the model.
+- **Requests are explicit and start-anchored.**
+  - A request is one of `/prompt`, "Puppeteer,", "Puppeteer:", "@Puppeteer" or a
+    bare "Puppeteer?" at the very start of a human message.
+  - One grammar is shared by `plugin/replies.ts` and
+    `puppeteer_bridge/triggers.py`, bound by `tests/fixtures/triggers.json`.
+  - Block a looser trigger, such as a name anywhere in the text or a trigger
+    without punctuation, and any change to one side without the other.
+  - In the owner's DM only `/prompt` is a task.
+- **Owner review never merges.**
+  - `keep` writes one commit on a new `puppeteer/<id>` branch with plumbing.
+  - Block hooks, checkout changes, pushes, or a keep that a group turn or a
+    coding session (`AGENT_ID`) can trigger.
 - **No shell from untrusted text.**
   - Participant text reaches the Mac only as a signed source record. It reaches
     `mp send` only on stdin, inside a random per-dispatch fence.
