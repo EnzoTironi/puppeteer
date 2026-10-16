@@ -11,7 +11,7 @@ async function fixture(t) {
   const directory=await mkdtemp(tmpdir()+'/puppeteer-group-');
   process.env.PUPPETEER_GROUP_POLL_MS='20';
   const controller=new AbortController(),sent=[],calls=[],states=new Map();
-  let active=0,peak=0,access=true,temporaryFailure=false;
+  let active=0,peak=0,access=true,temporaryFailure=false,paused=false;const sharedChats=new Set(['cht_group','cht_owner_dm']);
   const requests={
     async ask(source,alias) {
       source.assertCurrent();calls.push(['ask',source.message]);active++;peak=Math.max(peak,active);
@@ -24,13 +24,15 @@ async function fixture(t) {
       return {request:full,agent:'coder',status:states.get(full),...(states.get(full)==='replied'?{reply:'Actual answer for '+full}: {})};
     },
     async agents() { calls.push(['agents']);return {agents:[{alias:'coder',backend:'codex'}],mode:'parallel',workers:4}; },
+    async shared(chat) { calls.push(['shared',chat]);if(paused)throw new Error('demo_paused');if(!sharedChats.has(chat))throw new Error('chat_not_shared'); },
   };
-  const plow={async group(){if(!access)throw new Error('chat_not_served_by_this_agent');if(temporaryFailure){temporaryFailure=false;throw new Error('plow_http_503');}}};
+  const room=async()=>{if(!access)throw new Error('chat_not_served_by_this_agent');if(temporaryFailure){temporaryFailure=false;throw new Error('plow_http_503');}};
+  const plow={group:room,room};
   const send=async(chat,text)=>{sent.push({chat,text});};
   const group=new Groups(requests,plow,directory);
   t.after(async()=>{controller.abort();await new Promise(r=>setTimeout(r,60));await rm(directory,{recursive:true,force:true,maxRetries:3});});
   const wait=async predicate=>{const deadline=Date.now()+2500;while(!predicate()&&Date.now()<deadline)await new Promise(r=>setTimeout(r,10));assert.ok(predicate());};
-  return {group,directory,controller,sent,calls,states,requests,plow,send,wait,peak:()=>peak,revoke:()=>{access=false;},failOnce:()=>{temporaryFailure=true;}};
+  return {group,directory,controller,sent,calls,states,requests,plow,send,wait,sharedChats,peak:()=>peak,pause:()=>{paused=true;},revoke:()=>{access=false;},failOnce:()=>{temporaryFailure=true;}};
 }
 
 test('100 distinct people receive their own receipt and actual reply, with four connector calls at a time',async t=>{
@@ -125,4 +127,33 @@ test('watcher and maintenance process cannot duplicate a final or an interrupted
  assert.equal(f.sent.filter(s=>s.text.includes('owner to approve')).length,1);
  f.states.set(id(turn),'replied');await Promise.all([a.recoverOnce(f.send,next.signal),b.recoverOnce(f.send,next.signal)]);
  assert.equal(f.sent.filter(s=>s.text.includes('coder replied:')).length,1);
+});
+
+const dm={chat:'cht_owner_dm',message:'msg_owner',session:'agent:main:main',sender:'Owner',prompt:'/prompt Explain this project',direct:true};
+test("the owner's own /prompt in their DM gets the receipt and then the result, without being asked again",async t=>{
+  const f=await fixture(t);
+  await f.group.receive(dm,f.send,f.controller.signal);
+  assert.equal(f.sent.length,1);assert.match(f.sent[0].text,/Queued for a separate coding worker/);
+  f.states.set(id(dm),'replied');await f.wait(()=>f.sent.length===2);
+  assert.equal(f.sent[1].chat,'cht_owner_dm');assert.match(f.sent[1].text,/coder replied:[\s\S]*Actual answer/);
+  assert.equal(f.calls.filter(c=>c[0]==='ask').length,1);
+});
+
+test('before setup or while paused, a DM /prompt gets the next step and never reaches the Mac',async t=>{
+  const f=await fixture(t);f.sharedChats.delete('cht_owner_dm');
+  await f.group.receive(dm,f.send,f.controller.signal);
+  assert.match(f.sent.at(-1).text,/not connected to your Mac yet[\s\S]*Set up Puppeteer on my Mac/);
+  f.sharedChats.add('cht_owner_dm');f.pause();
+  await f.group.receive({...dm,message:'msg_owner_2'},f.send,f.controller.signal);
+  assert.match(f.sent.at(-1).text,/paused[\s\S]*Resume the demo/);
+  await f.group.receive({...dm,message:'msg_owner_3',prompt:'/prompt help'},f.send,f.controller.signal);
+  assert.match(f.sent.at(-1).text,/Puppeteer, fix the failing test/);
+  assert.deepEqual(f.calls.filter(c=>c[0]!=='shared'),[]);
+});
+
+test("the owner's DM never starts an owner question to themselves",async t=>{
+  const f=await fixture(t);
+  await f.group.receive({...dm,prompt:'/prompt ask owner Should I?'},f.send,f.controller.signal);
+  assert.match(f.sent.at(-1).text,/Group members use that to reach you privately/);
+  assert.deepEqual(f.calls,[]);
 });

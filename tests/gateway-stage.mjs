@@ -89,7 +89,7 @@ async function handle(req,res) {
  if(['/v1/chats/cht_stage/messages','/v1/chats/cht_owner/messages'].includes(path) && req.method==='POST') {
   outbound.push(body.body);outboundChats.push(path.split('/')[3]); json({uid:'msg_out_'+outbound.length});
   if(outbound.filter(text=>text.includes('coder replied:')).length===100&&!ownerPublished) {
-   ownerPublished=true;const message={uid:'msg_owner_0',chat_uid:ownerChat.uid,direction:'inbound',sender:members[0],body:'/prompt Explain the native owner SDK probe',attachments:[],created_at:new Date().toISOString()};messages.push(message);
+   ownerPublished=true;const message={uid:'msg_owner_0',chat_uid:ownerChat.uid,direction:'inbound',sender:members[0],body:'Puppeteer, explain the native owner SDK probe',attachments:[],created_at:new Date().toISOString()};messages.push(message);
    for(const socket of sockets.clients)socket.send(JSON.stringify({event_type:'message_received',event_id:message.uid,chat_id:ownerChat.uid,data:{message}}));
   }
   if(body.body.endsWith('Actual coding answer for msg_owner_0')&&!questionPublished) {

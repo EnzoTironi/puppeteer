@@ -21,14 +21,15 @@ for (const file of (await readdir(join(root, "puppeteer-src"))).filter(file => f
   const source = await readFile(join(root, "puppeteer-src", name + ".ts"), "utf8");
   await writeFile(join(extension, name + ".js"), stripTypeScriptTypes(source.replace(/from "(\.\/[^"\n]+)\.ts"/g, 'from "$1.js"')));
 }
-await replace(join(plugin, "index.js"), 'import { createHash } from "node:crypto";', 'import { createHash } from "node:crypto";\nimport { bindPuppeteerTurn, endPuppeteerTurn, isPrompt, puppeteerReply, routePuppeteerGroup, recoverPuppeteerGroups } from "/opt/puppeteer/plugin/puppeteer.js";\nimport { promptCommand, promptHelp, publicReply } from "/opt/puppeteer/plugin/replies.js";');
+await replace(join(plugin, "index.js"), 'import { createHash } from "node:crypto";', 'import { createHash } from "node:crypto";\nimport { bindPuppeteerTurn, endPuppeteerTurn, isPrompt, puppeteerReply, routePuppeteerGroup, recoverPuppeteerGroups } from "/opt/puppeteer/plugin/puppeteer.js";\nimport { isSlashPrompt, promptCommand, promptHelp, publicReply } from "/opt/puppeteer/plugin/replies.js";');
 await replace(join(plugin, "index.js"), '  const sender = message.sender, quoted = message.reply_to?.message;', '  if (account.accountId === "chat" && chat.participants.length > 2 && (message.sender.type !== "member" || !isPrompt(message.body))) return "completed";\n  const sender = message.sender, quoted = message.reply_to?.message;');
 await replace(join(plugin, "index.js"), '  const guestTools = !email && !chat.trusted && !senderIsOwner ? account.guestTools ?? [] : undefined;', '  const guestTools = !email && (kind === "group" || (!chat.trusted && !senderIsOwner)) ? account.guestTools ?? [] : undefined;');
 await replace(join(plugin, "index.js"), '  let activeRunId', '  let verifiedPuppeteerReply;\n  let activeRunId');
 await replace(join(plugin, "index.js"), '    silentRuns.delete(activeRunId);', '    verifiedPuppeteerReply = puppeteerReply(activeRunId) ?? verifiedPuppeteerReply;\n    silentRuns.delete(activeRunId);\n    endPuppeteerTurn(activeRunId);');
-await replace(join(plugin, "index.js"), '  const { onModelSelected, ...replyPipeline }', `  if (kind === "group" && isPrompt(body)) {
+await replace(join(plugin, "index.js"), '  const { onModelSelected, ...replyPipeline }', `  const ownerSlashPrompt = kind === "direct" && account.accountId === "chat" && senderIsOwner && isSlashPrompt(body);
+  if ((kind === "group" && isPrompt(body)) || ownerSlashPrompt) {
     ingress.onSubmitted();
-    await routePuppeteerGroup({ chat: chat.uid, message: message.uid, session: route.sessionKey, prompt: body, sender: senderName },
+    await routePuppeteerGroup({ chat: chat.uid, message: message.uid, session: route.sessionKey, prompt: body, sender: senderName, direct: kind === "direct" },
       (target, text) => send(account, target, text), ingress.abortSignal);
     await ingress.onAdopted();
     return "completed";
@@ -39,7 +40,9 @@ await replace(join(plugin, "index.js"), '      await listen(ctx.account,', `    
 await replace(join(plugin, "index.js"), '  const dispatched = runtime.channel.inbound.dispatch({', '  const dispatched = Promise.resolve().then(() => runtime.channel.inbound.dispatch({');
 await replace(join(plugin, "index.js"), '  });\n  ingress.onSubmitted();', '  }));\n  ingress.onSubmitted();');
 await replace(join(plugin, "index.js"), '        silentRuns.set(runId, false);', '        verifiedPuppeteerReply = undefined;\n        silentRuns.set(runId, false);\n        bindPuppeteerTurn(runId, { chat: chat.uid, message: message.uid, session: route.sessionKey, prompt: message.body, sender: senderName, owner: senderIsOwner });');
-await replace(join(plugin, "index.js"), '        // Plow sends unquoted replies;', `        if (!email && info.kind === "final" && isPrompt(body)) {
+await replace(join(plugin, "index.js"), '        // Plow sends unquoted replies;', `        // Replace the model's final with the verified result for /prompt turns, and for any request
+        // turn where a coding tool ran ("Puppeteer, fix X" in the owner's DM). Plain conversation stays.
+        if (!email && info.kind === "final" && (isSlashPrompt(body) || (isPrompt(body) && (puppeteerReply(activeRunId) ?? verifiedPuppeteerReply) !== undefined))) {
           const control = promptCommand(body);
           const text = control.kind === "help" ? promptHelp
             : control.kind === "invalid_status" ? "Use /prompt status REQUEST_ID with the ID from the original reply."
@@ -47,8 +50,8 @@ await replace(join(plugin, "index.js"), '        // Plow sends unquoted replies;
           return { ...payload, text, mediaUrls: undefined, mediaUrl: undefined, replyToId: undefined, replyToCurrent: false };
         }
         // Plow sends unquoted replies;`);
-await replace(join(plugin, "index.js"), '        if (!email && observedReplyDelivery && info.kind === "final") return null;', '        if (!email && isPrompt(body) && info.kind !== "final") return null;\n        if (!email && observedReplyDelivery && info.kind === "final") return null;');
-await replace(join(plugin, "index.js"), 'sourceReplyDeliveryMode: command && !senderIsOwner && chat.trusted ? "message_tool_only" : "automatic",', 'sourceReplyDeliveryMode: isPrompt(body) ? "automatic" : command && !senderIsOwner && chat.trusted ? "message_tool_only" : "automatic",');
+await replace(join(plugin, "index.js"), '        if (!email && observedReplyDelivery && info.kind === "final") return null;', '        if (!email && isSlashPrompt(body) && info.kind !== "final") return null;\n        if (!email && observedReplyDelivery && info.kind === "final") return null;');
+await replace(join(plugin, "index.js"), 'sourceReplyDeliveryMode: command && !senderIsOwner && chat.trusted ? "message_tool_only" : "automatic",', 'sourceReplyDeliveryMode: isSlashPrompt(body) ? "automatic" : command && !senderIsOwner && chat.trusted ? "message_tool_only" : "automatic",');
 await replace(join(plugin, "index.js"), 'inboundHistory: history.map(m => ({', 'inboundHistory: history.filter(m => kind !== "group" || isPrompt(m.body)).map(m => ({');
 await replace(join(plugin, "index.js"), 'rawBody: body },', 'rawBody: body, bodyForAgent: `${body}\\n\\nPuppeteer response language: English.` },');
 await replace(join(plugin, "transport.js"), 'import { mkdir, readFile, rename, writeFile } from "node:fs/promises";', 'import { isPrompt } from "/opt/puppeteer/plugin/puppeteer.js";\nimport { mkdir, readFile, rename, writeFile } from "node:fs/promises";');

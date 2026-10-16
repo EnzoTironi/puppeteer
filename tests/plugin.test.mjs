@@ -52,6 +52,15 @@ test('modern MCP headers, exact source IDs and shell-free argv are fixed by the 
  assert.ok(!JSON.stringify(body).includes(turn.prompt));
  assert.ok(!JSON.stringify(result).includes('fixture-token'));
 });
+test('a participant over their own queue limit gets a refusal, not a receipt', async () => {
+ responses.push(completed({agent:'coder',status:'participant_queue_full'}));
+ const refused=await requests.ask(turn,'coder');
+ assert.equal(refused.status,'participant_queue_full'); assert.equal(refused.agent,'coder'); assert.equal(refused.error,undefined);
+ responses.push(completed({agent:'coder',status:'invented_state'}));
+ const other={...turn,message:'msg_other'};
+ const result=await requests.ask(other,'coder');
+ assert.equal(result.status,'delivery_unknown');
+});
 test('empty and forged aliases never reach Latch', async () => {
  await assert.rejects(requests.ask({...turn,prompt:'/prompt'},'coder'),/prompt_text_required/);
  for (const alias of ['../private','coder; rm -rf','--help','coder\nconfigure']) await assert.rejects(requests.ask(turn,alias),/invalid_agent_alias/);

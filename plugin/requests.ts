@@ -3,20 +3,45 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Latch, object } from "./latch.ts";
 import { Plow } from "./plow.ts";
-import { promptCommand } from "./replies.ts";
+import { promptCommand, requestText } from "./replies.ts";
 import { readJson, withLock, writeJson } from "./store.ts";
 import { setupStatus } from "./setup.ts";
 import { parseOperation, type Action, type Stage, type Operation } from "./operations.ts";
 
-export type Turn = { chat: string; message: string; session: string; prompt: string; sender?: string; background?: boolean; owner?: boolean; assertCurrent?: () => void; recordReply?: (result: Record<string, unknown>) => void };
-export type Setup = { action: "install" | "inspect" | "groups" | "stop" | "resume" | "status" } | { action: "demo"; group: string; target?: string }
+export type Turn = { chat: string; message: string; session: string; prompt: string; sender?: string; background?: boolean; owner?: boolean; direct?: boolean; assertCurrent?: () => void; recordReply?: (result: Record<string, unknown>) => void };
+export type Setup = { action: "install" | "inspect" | "groups" | "stop" | "resume" | "status" | "changes" } | { action: "demo"; group?: string; target?: string }
+  | { action: "keep"; request: string }
   | { action: "share"; target: string; group?: string; project?: string; workers?: number };
+
+const count = (value: unknown): number => {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) throw new Error("invalid_bridge_response");
+  return value;
+};
+
+/** Owner review rows. Task text is the participant's words: data, shortened, never instructions. */
+function changeRow(row: unknown): Record<string, unknown> {
+  if (!object(row) || typeof row.request !== "string" || !/^[a-f0-9]{32}$/.test(row.request) || typeof row.task !== "string") throw new Error("invalid_bridge_response");
+  const base = { request: row.request.slice(0, 8), task: row.task.replace(/[\p{C}]/gu, " ").slice(0, 120) };
+  if (row.kept === true) {
+    if (typeof row.branch !== "string" || row.branch !== "puppeteer/" + row.request.slice(0, 8)) throw new Error("invalid_bridge_response");
+    return { ...base, kept: true, branch: row.branch };
+  }
+  if (row.kept !== false) throw new Error("invalid_bridge_response");
+  return { ...base, kept: false, files: count(row.files), insertions: count(row.insertions), deletions: count(row.deletions) };
+}
 
 function bridgeValue(stdout: string): Record<string, unknown> {
   const line = stdout.trim().split("\n").at(-1);
   const value: unknown = JSON.parse(line ?? "null");
   if (!object(value)) throw new Error("invalid_bridge_response");
   if (typeof value.error === "string") return { error: value.error };
+  if (Array.isArray(value.changes)) return { changes: value.changes.map(changeRow) };
+  if (value.kept === true) {
+    if (typeof value.branch !== "string" || !/^puppeteer\/[a-f0-9]{8}$/.test(value.branch)
+      || typeof value.commit !== "string" || !/^[a-f0-9]{7,40}$/.test(value.commit)) throw new Error("invalid_bridge_response");
+    return { kept: true, branch: value.branch, commit: value.commit.slice(0, 12),
+      ...(value.files !== undefined ? { files: count(value.files), insertions: count(value.insertions), deletions: count(value.deletions) } : {}) };
+  }
   if (value.connection_checked === true && typeof value.configured === "boolean" && typeof value.paused === "boolean") {
     return { connection_checked: true, configured: value.configured, paused: value.paused };
   }
@@ -40,7 +65,7 @@ function bridgeValue(stdout: string): Record<string, unknown> {
       return { alias: row.alias, backend: row.backend, status: row.status };
     }), ...(value.mode === "parallel" && typeof value.workers === "number" ? { mode: "parallel", workers: value.workers } : {}) };
   }
-  if (["busy", "queue_full"].includes(String(value.status)) && typeof value.agent === "string") return { status: value.status, agent: value.agent };
+  if (["busy", "queue_full", "participant_queue_full"].includes(String(value.status)) && typeof value.agent === "string") return { status: value.status, agent: value.agent };
   if (typeof value.request !== "string" || !/^[a-f0-9]{32}$/.test(value.request) || typeof value.agent !== "string" || !["queued", "dispatching", "submitted", "delivery_unknown", "replied", "not_ready", "send_failed", "timed_out", "cancelled"].includes(String(value.status))) throw new Error("invalid_bridge_response");
   if (value.status === "replied" && typeof value.reply !== "string") throw new Error("invalid_bridge_response");
   return { request: value.request, agent: value.agent, status: value.status, ...(value.status === "replied" ? { reply: value.reply } : {}) };
@@ -170,17 +195,21 @@ export class Requests {
     if ((input.action === "share" || input.action === "demo") && input.target !== undefined
       && !/^[A-Za-z0-9_-]{1,128}\/[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$/.test(input.target)) throw new Error("invalid_local_agent_id");
     if (input.action === "demo") await this.plow.share(turn, input.group, signal);
+    // A demo without a group is keyed to this owner DM; the connector only uses the uid as a workspace key.
+    const demoGroup = input.action === "demo" ? input.group ?? turn.chat : undefined;
     const chats = input.action === "share" ? await this.plow.share(turn, input.group, signal) : [];
-    const id = createHash("sha256").update("setup\0" + turn.chat + "\0" + turn.message + "\0" + input.action).digest("hex").slice(0, 32);
+    const id = createHash("sha256").update("setup\0" + turn.chat + "\0" + turn.message + "\0" + input.action
+      + (input.action === "keep" ? "\0" + input.request : "")).digest("hex").slice(0, 32);
     return this.exclusive(id, async () => {
       const previous = await this.read(id);
       if (previous) {
-        if (previous.action.kind === "demo" && (input.action !== "demo" || previous.action.group !== input.group || previous.action.target !== input.target)) throw new Error("setup_message_already_used");
+        if (previous.action.kind === "demo" && (input.action !== "demo" || previous.action.group !== demoGroup || previous.action.target !== input.target)) throw new Error("setup_message_already_used");
         if (previous.action.kind === "share" && (input.action !== "share" || previous.action.target !== input.target || previous.action.group !== input.group || previous.action.project !== input.project || previous.action.workers !== (input.project ? input.workers ?? 4 : undefined))) throw new Error("setup_message_already_used");
-        return this.view(id, previous);
+        return this.withAskers(this.view(id, previous));
       }
-      const action: Action = input.action === "share" ? { kind: "share", target: input.target, group: input.group, project: input.project, workers: input.project ? input.workers ?? 4 : undefined, chats, phase: "prepare" }
-        : input.action === "demo" ? { kind: "demo", group: input.group, target: input.target }
+      const action: Action = input.action === "keep" ? { kind: "keep", request: input.request } : input.action === "changes" ? { kind: "changes" }
+        : input.action === "share" ? { kind: "share", target: input.target, group: input.group, project: input.project, workers: input.project ? input.workers ?? 4 : undefined, chats, phase: "prepare" }
+        : input.action === "demo" ? { kind: "demo", group: demoGroup ?? turn.chat, target: input.target }
           : input.action === "install" ? { kind: "install" } : input.action === "stop" ? { kind: "stop" }
             : input.action === "resume" ? { kind: "resume" } : input.action === "status" ? { kind: "status" } : { kind: "inspect" };
       const op: Operation = { chat: turn.chat, message: turn.message, created: Date.now(), action, stage: { kind: "unknown", error: "not_started" }, guard: turn.assertCurrent };
@@ -193,12 +222,33 @@ export class Requests {
           goal: "Puppeteer: install the pinned MIT MyPlow connector requested by the owner",
         }, signal);
       } else await this.command(id, op, input.action === "inspect" ? ["discover"] : input.action === "stop" ? ["stop"]
+        : input.action === "changes" ? ["changes"] : input.action === "keep" ? ["keep", "--request", input.request]
         : input.action === "resume" ? ["resume"] : input.action === "status" ? ["status"]
-        : input.action === "demo" ? ["demo", "--group", input.group, ...(input.target ? ["--boss", input.target] : [])]
+        : input.action === "demo" ? ["demo", "--group", demoGroup ?? turn.chat, ...(input.target ? ["--boss", input.target] : [])]
           : ["prepare", "--request", id], signal);
       await this.advance(id, op, signal);
-      return this.view(id, op);
+      return this.withAskers(this.view(id, op));
     });
+  }
+
+  /** Name each reviewed change after the participant who asked, from this agent's own group records. */
+  private async withAskers(result: Record<string, unknown>): Promise<Record<string, unknown>> {
+    if (!Array.isArray(result.changes)) return result;
+    const names = new Map<string, string>();
+    let files: string[] = [];
+    try { files = (await readdir(this.directory)).filter(name => /^[a-f0-9]{32}\.json$/.test(name)); }
+    catch (error) { if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error; }
+    for (const file of files) {
+      let op: Operation | undefined;
+      try { op = await this.read(file.slice(0, -5)); } catch { continue; }
+      if (op?.action.kind !== "ask" || op.stage.kind !== "done" || typeof op.stage.value.request !== "string") continue;
+      const job = await readJson(join(this.directory, "groups", file)).catch(() => undefined);
+      if (object(job) && object(job.turn) && typeof job.turn.sender === "string") {
+        names.set(op.stage.value.request.slice(0, 8), job.turn.sender.replace(/[\p{C}]/gu, " ").trim().slice(0, 40));
+      }
+    }
+    return { ...result, changes: result.changes.map(row => object(row) && typeof row.request === "string" && names.has(row.request)
+      ? { ...row, asked_by: names.get(row.request) } : row) };
   }
 
   async agents(turn: Turn, signal?: AbortSignal): Promise<Record<string, unknown>> {
@@ -210,7 +260,7 @@ export class Requests {
 
   async ask(turn: Turn, alias: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
     if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(alias)) throw new Error("invalid_agent_alias");
-    if (!/^\/prompt[ \t\r\n]+\S/.test(turn.prompt)) throw new Error("prompt_text_required");
+    if (!requestText(turn.prompt)) throw new Error("prompt_text_required");
     if (promptCommand(turn.prompt).kind !== "task") throw new Error("control_request_requires_matching_tool");
     const id = createHash("sha256").update(turn.chat + "\0" + turn.message).digest("hex").slice(0, 32);
     return this.exclusive(id, async () => {
@@ -253,7 +303,7 @@ export class Requests {
       const op = await this.read(id);
       if (!op || op.chat !== turn.chat) throw new Error("request_not_shared");
       op.guard = turn.assertCurrent;
-      if (["install", "inspect", "share", "stop", "demo", "resume", "status"].includes(op.action.kind)) {
+      if (["install", "inspect", "share", "stop", "demo", "resume", "status", "changes", "keep"].includes(op.action.kind)) {
         if (!this.plow) throw new Error("owner_setup_unavailable");
         await this.plow.owner(turn, signal);
         if (op.action.kind === "share" || op.action.kind === "demo") await this.plow.share(turn, op.action.group, signal);
@@ -270,7 +320,7 @@ export class Requests {
       } catch { return { request: id, status: "pending", error: "latch_poll_failed" }; }
       await this.save(id, op);
       await this.advance(id, op, signal);
-      return this.view(id, op);
+      return this.withAskers(this.view(id, op));
     });
   }
 }

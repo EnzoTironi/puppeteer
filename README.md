@@ -1,401 +1,407 @@
 # Puppeteer
 
-The agent introduces itself as Puppeteer in English. Plow's phone-line display
-name, such as Alder, Oak or Spruce, does not change the agent's identity.
+Your group chat gets a coding teammate. The people you add to an iMessage group
+can ask the Claude Code and Codex agents already running in MyPlow on your Mac
+to explain, fix and build. You see what they changed and keep what you want as
+a branch.
 
-Let people in a Plow conversation talk to the Claude Code and Codex agents
-running in MyPlow on your Mac. Use an existing session for one task at a time,
-or let a MyPlow Boss supervise separate workers for a live group. Guided setup
-reuses your existing Boss or creates one when needed. Each
-reply returns to the participant and conversation that asked.
-
-Puppeteer is an OpenClaw variant built on the public Plow base image. Plow Chat
-carries the conversation; Plow Latch connects to the Mac; MyPlow's `mp send`
-reaches the existing session. There is no custom relay or inbound Mac port.
-
-```mermaid
-flowchart LR
-  Guest[Participant in an approved Plow chat] --> Cloud[Puppeteer / OpenClaw]
-  Cloud --> Relay[Plow Latch relay]
-  Relay --> Bridge[Mac: puppeteer-bridge]
-  Bridge --> Agent[Existing Claude Code or Codex session]
-  Agent --> Reply[Reply with request ID]
-  Reply --> Cloud
-  Cloud --> Guest
-```
-
-## Connect an existing MyPlow Mac without a terminal
-
-Deploy Puppeteer on the **same Plow account** as your Mac's Latch. The Agent
-Index's 1-click deployment is enabled for Puppeteer. Select the public listing
-and deploy it on a free line belonging to that account.
-
-Keep your existing MyPlow installation and running coding sessions. Keep
-Latch open and the Mac awake. Text Puppeteer privately:
+Anyone in the group starts a message with "Puppeteer," and gets a real answer
+from a real coding agent, with their name and a request ID on it:
 
 ```text
-Set up Puppeteer on my Mac.
+Alex: Puppeteer, make greet() say good morning before noon
+Puppeteer: Alex · #a1234567
+           Queued for a separate coding worker. I'll post its reply here when it arrives.
+           Check again: /prompt status a1234567
+Puppeteer: Alex · #a1234567
+           coder replied:
+
+           Changed greeting.py to pick the greeting from the hour.
+           Ran python3 test_greeting.py: 2 tests passed.
 ```
 
-Puppeteer installs its pinned MIT connector through Latch and checks your Mac.
-It offers to create an iMessage group and use your existing MyPlow Boss. If it
-finds no Boss, it creates one for the group. Name the first participant. It looks up an exact Contacts match when available
-and asks for an iMessage phone number or email only when that address cannot
-be verified. It creates the group, prepares a fresh coding
-workspace with a Git commit and a passing test, and connects four parallel
-workers. You can add more people in iMessage.
+Later, in your private chat with Puppeteer:
 
-For example, when an existing Boss is found:
+```text
+You: What's waiting?
+Puppeteer: #a1234567 Alex: "make greet() say good morning before noon", 2 files (+9 -2).
+           Say "keep a1234567" to save it as a branch.
+You: Keep a1234567
+Puppeteer: Saved as branch puppeteer/a1234567 (commit 3f2c1d9e8b7a). Nothing was merged or pushed.
+```
 
-> I found your MyPlow Boss. I can create an iMessage group and a fresh coding
-> workspace for it. Who should I add first?
+Ordinary conversation in the group never reaches a model or your Mac. Only
+messages that start with "Puppeteer,", "Puppeteer:", "@Puppeteer" or `/prompt`
+do.
 
-You do not need to copy technical IDs, prepare a demo repo or choose a worker
-count. If you want an existing group or project, tell Puppeteer its name instead.
-The owner-only demo operation prepares fixed local resources; the subsequent
-share operation grants alias `coder` to your private DM and at most one chosen
-group. Sharing again replaces those grants. Pending approvals resume their
-original receipts, and setup retries preserve the workspace and native sessions.
+[Watch the demo](https://youtu.be/A6wRp-Ymw9U) ·
+[Agent Index](https://aiworthusing.com/agent-index/puppeteer)
 
-**No Mac terminal commands or additional `plow-agents login` are needed for
-this guided path.** MyPlow supplies `uv` and the local runtime. The connector
-reads native MyPlow configuration and calls its installed `mp send`. It reaches
-sessions managed by MyPlow, including Claude Code and Codex; it does not attach
-to arbitrary Codex desktop tabs or unmanaged terminals.
+## What it will and won't do
 
-Setup is restricted to the authenticated owner's main private DM. In every
-phone group, including trusted groups and the owner's turns, only the three
-narrow coding tools and the scoped private owner-question tool are available. The owner chooses the session and group;
-the model cannot supply commands, paths, credentials, or replacement prompts.
-The default audience setup creates a fresh coding project.
+It will:
 
-If MyPlow is missing, install and authenticate it before this flow using its
-[upstream instructions](https://github.com/delattre1/mypeople). If Latch refuses
-an operation, Puppeteer reports the refusal; it does not bypass it.
+- Forward a verified request, once, to the MyPlow workers you shared, and post
+  the agent's actual reply back in the same conversation.
+- Give each person their own worker and Git worktree, so four people can work
+  at once without editing the same checkout.
+- Tell you, privately, what the group changed and who asked. It saves a change
+  as a branch only when you say "keep".
+- Relay "Puppeteer, ask owner …" questions to you privately, and send your
+  answer back to that group.
+- Pause, resume and report status when you ask in your private chat.
 
-To stop group access without a terminal, ask Puppeteer privately to share
-only with your private DM. To revoke all connector access, remove
-`~/.config/puppeteer/bridge.json` on the Mac. This does not stop running coding
-sessions or erase their worktrees. Custom MyPlow homes can use owner-configured
-`PUPPETEER_MAC_READ_PATHS` and `PUPPETEER_MAC_WRITE_PATHS` JSON arrays in the
-cloud environment, with the selected runtime directory included for writes.
+It won't:
+
+- Run anything a guest types as a shell command, path or tool argument. The
+  task text reaches the coding agent on stdin, fenced as participant data.
+- Give a group, or you while you are in a group, any tool beyond the four
+  coding and question tools. Setup, review and raw Mac tools exist only in
+  your private chat with Puppeteer.
+- Merge, push or publish anything. "Keep" writes one commit on a new branch
+  and leaves your checkout alone.
+- Resend anything whose delivery it could not confirm. It reports the
+  uncertainty and lets you decide.
+- Sandbox the coding agent. A worktree prevents edit collisions; the agent
+  still has its usual permissions on your Mac. Share the workspace with people
+  you would let use it.
+
+## Install
+
+You need, on the same Plow account:
+
+- [MyPlow](https://github.com/delattre1/mypeople) installed and signed in on
+  your Mac, with Claude Code or Codex as its backend.
+- [Latch](https://plow.co/download/latch) open on that Mac, and the Mac awake.
+
+Then:
+
+1. Open [Puppeteer on the Agent Index](https://aiworthusing.com/agent-index/puppeteer)
+   and tap **Text this agent**. Plow deploys Puppeteer on a free line of your
+   account.
+2. Text Puppeteer privately: `Set up Puppeteer on my Mac.`
+3. Approve the connector install when Latch asks. Puppeteer installs the pinned
+   MIT connector with `uv`, checks MyPlow, reuses your Boss (or creates one) and
+   prepares a fresh coding workspace with one commit and a passing test. It
+   asks you nothing else:
+
+   > Your coding workspace is ready. Try it here: /prompt explain this project.
+   > When you want your team in, tell me who to add.
+
+4. Try it in that chat. In your private chat, `/prompt` sends a coding task and
+   the reply arrives on its own; anything else you write is a conversation with
+   Puppeteer.
+5. When you're ready, name people: "Add Alex and Sam." Puppeteer looks for exact
+   matches in your Contacts, asks for an iMessage number or email only when it
+   cannot verify one, creates the group, shares the same workspace with it and
+   welcomes them.
+
+You don't copy IDs or choose a worker count. To use an existing group or one of
+your own projects instead, name it in your private chat.
+
+No Mac terminal commands and no extra `plow-agents login` are needed. MyPlow
+supplies `uv` and the runtime. The connector calls MyPlow's installed `mp`; it
+reaches sessions MyPlow manages, not arbitrary Codex desktop tabs or unmanaged
+terminals.
+
+### Stop, revoke, upgrade
+
+- **Pause:** text "Pause the demo". Queued work is cancelled and this
+  workspace's workers retire; worktrees stay. "Resume the demo" reopens the
+  same group and workspace without replaying cancelled or uncertain tasks.
+- **Check the connection:** "Check my Mac connection" runs a read-only check.
+- **Revoke group access:** ask Puppeteer to share only with your private chat.
+- **Revoke everything:** remove `~/.config/puppeteer/bridge.json` on the Mac.
+  Running coding sessions and their worktrees are not touched.
+- **Upgrade the connector:** text "Upgrade the Mac connector". A cloud image
+  update does not change software already installed on your Mac. Name triggers
+  ("Puppeteer, …"), the participant cap, the random fence and review need the
+  upgraded connector; until then groups keep using `/prompt`.
+
+Custom MyPlow homes and projects outside MyPlow's directory need
+`PUPPETEER_MAC_READ_PATHS` and `PUPPETEER_MAC_WRITE_PATHS` (JSON arrays) in the
+cloud environment. Include the selected runtime directory, and your project
+when you want to keep its changes as branches.
+
+## Use it in a group
+
+| Message | What happens |
+| --- | --- |
+| `Puppeteer, TASK` | Sends the task once. The reply arrives in the group with your name and request ID. |
+| `Puppeteer?` or `Puppeteer, help` | A short usage reply. Nothing runs on the Mac. |
+| `Puppeteer, agents` | Lists the sessions shared with this group. |
+| `Puppeteer, status ID` | Reads that request's current result. Never starts new work. |
+| `Puppeteer, status ID full` | The full reply when the first one was an excerpt. |
+| `Puppeteer, ask owner QUESTION` | Sends the question privately to the Mac owner. The group sees nothing until the owner answers. |
+
+`Puppeteer:`, `@Puppeteer` and `/prompt` work in place of `Puppeteer,`. A
+request has to start the message: "Hey Puppeteer, …", "Puppeteer is great",
+leading spaces, `/PROMPT` and `/promptfoo` are ordinary chat and are ignored.
+The eight-character ID from a reply is enough for `status`.
+
+Each request gets a fresh detached worktree from the project. A person's first
+task starts from the project as it is, including tracked changes and
+untracked, non-ignored files. Their follow-ups continue from their own last
+completed worktree, with their previous task and its reply as context. Other
+people's work stays separate.
+
+Limits, all enforced on the Mac:
+
+- Up to the chosen number of workers (default four, at most eight) run at once.
+- One person has one running task per group; their next tasks wait.
+- One person can have at most three tasks waiting per group. The group holds up
+  to 256 waiting tasks in total. Extra tasks get a plain refusal.
+- Queued work expires after 15 minutes. The original message must be less than
+  an hour old when it is verified.
+- One owner question can be pending per group, for 48 hours, up to 500
+  characters.
+
+For a live demo, use a group whose members and bot send and receive iMessage
+in that same group. SMS replies can arrive as individual messages instead (see
+[Apple's group messaging guidance](https://support.apple.com/en-us/118236)).
+
+## Review and keep
+
+Ask Puppeteer privately "What's waiting?" It lists the group's finished tasks
+whose worktrees hold changes, newest first:
+
+- the ID;
+- who asked;
+- the task;
+- the size: files and lines added and removed.
+
+Say "keep ID" to save one as branch `puppeteer/ID` in the project. Then review
+it with your usual tools, for example `git diff main...puppeteer/a1234567`, and
+merge it if you like it.
+
+Keeping writes one commit with Git plumbing: no hooks run, and your checkout,
+index and HEAD don't move.
+
+- Each worktree's starting state is recorded when it is created, so the commit
+  holds only that worker's edits.
+- If your project had uncommitted work when the task started, that work
+  becomes a separate parent commit.
+- Ignored files such as `.env` are never included.
+- A person's later task builds on their earlier one, so their newest entry
+  holds all of their work.
+
+## Run the cloud agent locally
+
+With Docker and [plow-agents](https://github.com/plow-pbc/plow-agents) installed:
+
+```sh
+git clone https://github.com/EnzoTironi/puppeteer.git
+cd puppeteer
+plow-agents login
+plow-agents lines
+plow-agents mint LINE_UID          # writes ./plow-credentials (git- and docker-ignored)
+docker compose up --build -d
+docker compose logs -f agent       # wait for "plow-boot: identity resolved"
+```
+
+Use a line `plow-agents lines` shows as free, then text its number:
+`Set up Puppeteer on my Mac.` The dashboard is on loopback only, at
+<http://localhost:3001> (`HOST_PORT=3002 docker compose up -d` to move it).
+
+The image already sets `AGENT_ID=puppeteer`. The inherited base reporter
+therefore registers this install and reports the cloud agent's OpenClaw usage
+every five minutes. It never attributes local MyPlow usage to Puppeteer.
+Change `AGENT_ID` if you fork it as a different agent. `docker compose down`
+keeps state; `down -v` starts fresh.
+
+On Apple Silicon, build the native `linux/arm64` image (`docker compose
+build`). Emulated `linux/amd64` can fail OpenClaw's secure file locks with
+`openat2 … ENOSYS`; do not disable those locks.
+
+## Deploy and publish
+
+```sh
+plow-agents image build ghcr.io/YOU/puppeteer-openclaw:v1
+plow-agents image push ghcr.io/YOU/puppeteer-openclaw:v1      # prints repo@sha256:…
+plow-agents deploy ghcr.io/YOU/puppeteer-openclaw@sha256:DIGEST --line LINE_UID
+```
+
+Make the GHCR package public.
+
+- **1-click deploy:** give the Plow admin your account UID (`plow-agents
+  profile --show`), the slug `puppeteer` and the digest printed by the push.
+- **Later updates:** `plow-agents image push ghcr.io/YOU/puppeteer-openclaw:v2 --promote puppeteer`.
+- **Listing:** media and copy are drafted in
+  [docs/agent-index/listing.md](docs/agent-index/listing.md). Register them
+  with the [agent-index-client](https://github.com/plow-pbc/agent-index-client),
+  then post the repo, commit and Agent Index ID in the verification thread.
 
 ## Advanced: manual connector setup
 
-The original terminal path remains available for custom deployments:
+For custom deployments, install the same pinned connector yourself:
 
 ```sh
 uv tool install 'git+https://github.com/EnzoTironi/puppeteer.git@6375e8021e6362ad7a7938cfff9d7e8e39c0c67f'
 plow-agents login
 puppeteer-bridge configure \
-  --agent coder=sams-mac/main:eng-codex \
+  --agent coder=YOUR-HOST/main:eng-codex \
   --chat cht_YOUR_CONVERSATION
 ```
 
-Manual configuration uses the Mac's own `~/.config/plow/token` to fetch and
-verify original Plow messages; it is not copied into the cloud. Pair through
-the guided owner setup before using the cloud image's signed dispatch path.
-`MYPEOPLE_CONFIG_PATH`, `MYPEOPLE_HOME`, `PUPPETEER_CONFIG`, `--token-file` and
-`--api-base` support custom installations. Configure replaces the complete
-agent and conversation grant list. Revoking a grant also revokes stored replies.
+Manual configuration verifies messages with the Mac's own Plow login
+(`~/.config/plow/token`), which is never copied to the cloud. Pair through the
+guided setup before using the cloud image's signed path.
 
-## Audience demo with Sam's Mac
+- **Custom installs:** `MYPEOPLE_CONFIG_PATH`, `MYPEOPLE_HOME`,
+  `PUPPETEER_CONFIG`, `--token-file` and `--api-base`.
+- **Grants:** `configure` replaces the whole grant list. Revoking a grant also
+  hides its stored replies.
+- **Inside a MyPlow agent session** (`AGENT_ID` set), the connector refuses
+  `configure`, `demo`, `prepare`, `pair`, `stop` and `keep`, so a coding agent
+  cannot widen its own grants or save branches on its own.
 
-Sam runs **one Puppeteer deployment on his Plow account**, with his Mac's
-Latch signed into that same account. In Puppeteer's private setup conversation,
-he asks it to create the audience group and supplies the first participant's
-iMessage number or email. He can add more people in iMessage afterward, or
-choose an existing group by name.
-Audience members only join the group; they do not install another agent.
-Deploying a separate copy under another account connects to that account's
-Mac, not automatically to Sam's.
+## How it works
 
-Only human messages that begin with the exact `/prompt` command are processed:
-
-```text
-/prompt help
-/prompt what?
-/prompt agents
-/prompt Fix the failing test in the demo project
-/prompt status REQUEST_ID
-/prompt coder: Explain what this project does
+```mermaid
+flowchart LR
+  Guest[Person in an approved Plow chat] --> Cloud[Puppeteer / OpenClaw]
+  Cloud --> Relay[Plow Latch relay]
+  Relay --> Bridge[Mac: puppeteer-bridge]
+  Bridge --> Agent[MyPlow worker in its own worktree]
+  Agent --> Reply[Reply with request ID]
+  Reply --> Cloud
+  Cloud --> Guest
 ```
 
-Normal conversation, `/promptfoo`, and `/prompt` appearing inside a sentence
-are ignored before the model and are not forwarded to MyPlow. `/prompt` alone
-gets a usage example and never starts local work. The command is case sensitive
-and must be at the start of the message. Its prefix is removed before the
-verified task reaches the local coding session. Use `/prompt status ID`
-to resume an interrupted request in that same group. The eight-character ID
-in the reply is sufficient; the full receipt remains valid. Use
-`/prompt status ID full` to read a long reply in full.
+Puppeteer is an OpenClaw variant of Plow's public base image. Plow Chat carries
+the conversation, Latch reaches the Mac, and MyPlow's `mp` reaches the
+sessions. There is no custom relay and no inbound port on the Mac.
 
-The runtime binds each tool to its actual current chat and inbound message.
-Guests cannot supply replacement text, another chat/message ID, paths, shell
-commands, or Latch output handles. Pending approvals and running commands
-use private, conversation-bound receipts. The Mac also enforces the prefix,
-chat grant, agent grant, source identity, age, and request deduplication.
+**Identity.** Puppeteer always introduces itself as Puppeteer, in English. The
+phone line's display name (Alder, Oak, Spruce) is transport metadata.
 
-## Group responses and parallel workers
+**Verification.** A fixed router in the Plow channel handles requests before
+any model turn: every group request, and the owner's `/prompt` in their DM.
 
-Puppeteer uses [Mac Guardian's warm, direct, practical personality](https://github.com/EnzoTironi/mac-guardian-agent/blob/f0b722431ea5a31fc4c14db7d1f8a8bf1c79c9cc/prompt/AGENTS.md), adapted to a shared coding team. It answers the request first, takes the next authorized step and reports confirmed results briefly. The marionettist stays in the visual branding. The same voice guides owner onboarding, fixed group status messages and native worker answers. Style never changes access or execution rules.
+- **Cloud:** fetches the original message with its own credential, checks that
+  the sender belongs to the conversation and the text matches, and signs that
+  record with a per-install pairing key.
+- **Mac:** checks the signature, conversation, sender, age and trigger again.
+  The cloud and the Mac read one trigger grammar, which
+  `tests/fixtures/triggers.json` binds.
+- **Hand-off:** the Mac passes the text to `mp send` on stdin, inside a random
+  fence the participant cannot predict.
+- **Secrets:** credentials and pairing keys never appear in tool results or
+  request ledgers.
 
-Group replies use English plain text. Each coding result identifies the sender,
-a short request ID and the answering agent. For example:
+**Delivery.**
 
-```text
-Alex · #a1234567
-coder replied:
+- Each source message gets one request ID; concurrent retries do not send twice.
+- The coding agent answers through a callback authorized by a private
+  per-request key. Only the key's hash is stored.
+- The router posts the receipt, watches it, and posts the actual answer. A
+  model's free text never replaces a verified result: when a request turn ran
+  a coding tool, its final reply is the verified one.
+- Only Latch's real `awaiting_approval` state asks the owner to approve.
+- Requests expire after 15 minutes.
 
-Changed greeting.py. Ran python3 test_greeting.py: 1 test passed.
-```
+**Recovery.**
 
-The delivery layer derives that text from the verified tool status and actual
-local answer. It drops free-form model commentary and fabricated result text.
-A submitted task is never described as completed. Only the actual Latch
-`awaiting_approval` state asks the Mac owner to approve.
+- Receipts, notifications and private questions are recorded as sending before
+  any network call.
+- After a restart the gateway resumes watching.
+- A native OpenClaw command job (`puppeteer-recover`) reconciles unfinished
+  receipts every five minutes, with no model turn.
+- An uncertain send is never repeated automatically; `status ID` reads the
+  stored result.
 
-For an audience, ask Puppeteer privately to create a group for your demo.
-The guided flow uses the existing Boss or creates one, prepares a new Git project
-and connects four workers automatically. Audience members join that group.
+**Setup gate.** Before each owner turn in the private chat, the startup plugin
+injects the confirmed setup state, so old chat history cannot reset or fake
+setup. Tools still require the current authenticated message.
 
-If you explicitly want your existing project, name it in the private setup chat.
-Puppeteer uses inspected native IDs internally. The owner-only `share` tool
-accepts a Boss target, a Claude Code or Codex project session at a Git root with
-at least one commit, a worker count from one to eight and an optional group.
-Four workers is the default. This advanced path remains available without
-turning the default onboarding into a configuration questionnaire.
+**Boot.** `boot/preboot.ts` follows the base `boot/main.ts` step for step:
+credential rotation, config rendering, gateway start and the five-minute Agent
+Index reporter. On top of that it adds:
 
-Puppeteer verifies the original message, records it in a private SQLite queue,
-and starts separate native workers with `mp spawn --boss SELECTED_BOSS`.
-Each request gets a fresh detached Git worktree. A participant's first task
-starts from the selected project, including its tracked changes and untracked,
-non-ignored files. Their follow-up starts from their own last completed worktree
-and receives their previous task and actual reply as context. Other participants
-start independently. The worker
-uses the project's native Claude Code or Codex backend and returns the answer
-with its private per-request callback. The connector performs the routing;
-the Boss is the native parent and receives MyPlow lifecycle notifications.
-Puppeteer does not wait for the Boss model to relay every message.
+- the required Puppeteer plugin;
+- a 60-second Mac relay timeout;
+- preserved model preferences.
 
-Up to the chosen number of workers run concurrently. One participant has one
-active task per conversation; their later tasks wait while other people can
-work. Up to 256 waiting tasks are accepted. Overflow receives an explicit
-queue-full response and is not accepted. Queued work expires after 15 minutes.
-Every result includes the original participant and eight-character request ID,
-so out-of-order replies still match the correct request.
+`scripts/customize-base.mjs` patches the pinned Plow channel at exact anchors,
+and the build fails if an anchor moves. See
+[docs/meetly-patterns.md](docs/meetly-patterns.md) for the patterns adapted
+from Meetly and [checks/runtime-spike.md](checks/runtime-spike.md) for runtime
+boundaries.
 
-The phone group uses a fixed command router before the cloud model. The
-router sends a receipt, watches only that receipt, and posts the verified
-native answer automatically. It recovers pending receipt reads after gateway
-restart without sending another task. An uncertain phone delivery is never
-automatically repeated; `/prompt status ID` can retrieve its actual result.
-The Mac rechecks the current chat, Boss and project grants before disclosing
-results. Re-share only with the owner's private DM to revoke group access.
+## Known limitations
 
-Workers edit their own worktrees. They do not automatically merge, push or
-publish changes into the original project. Completed workers are retired
-through MyPlow; their worktrees remain available for the owner to review.
-The native agent still has its usual permissions: a worktree prevents routine
-edit collisions and is not a filesystem sandbox.
+- **No sandbox.** The coding agent keeps its native permissions; the worktree
+  only separates edits. Anyone in a shared group can ask it to do whatever that
+  session can do.
+- **English only.** Replies and fixed messages are in English.
+- **One Latch call per request.** Every group request costs one Latch call
+  before the Mac applies its limits. If your Latch policy asks before each
+  command, a busy group means many prompts.
+- **Connector upgrades.** Changes to `puppeteer_bridge/` reach Macs only after
+  `PUPPETEER_BRIDGE_COMMIT` is bumped to a pushed commit and the owner upgrades
+  the connector. Older connectors answer a "Puppeteer, …" request with a
+  message to use `/prompt`.
+- **Keep needs write access.** Keeping a change in a project outside MyPlow's
+  directory needs that project in `PUPPETEER_MAC_WRITE_PATHS`. The default
+  workspace is inside it.
+- **Simulation is not iMessage.** A 100-participant simulated gateway test does
+  not prove Apple supports a 100-person physical iMessage group.
+- **Watchers can stop.** A group watcher that stops on an unexpected error
+  leaves the reply to the five-minute recovery job.
 
-Single-session mode remains available when `project` is omitted. One task
-reserves that existing target. Concurrent tasks receive an accurate busy
-response; they are not queued. Uncertain or timed-out session requests retain
-the reservation. Parallel workers with uncertain delivery retain their slot;
-the connector does not replace them while execution may still be running.
-The owner can privately say "Stop the parallel demo." The owner-only stop tool
-pauses new requests, cancels queued work and retires only that demo's workers.
-It reports any stop it could not confirm. Worktrees stay available for review.
-An explicit private resume keeps the same group, grants and workspace without
-replaying cancelled or uncertain requests. Native trust or login screens
-produce a not-ready response; Puppeteer never pastes a task into those screens.
-
-The channel keeps 4,096 handled IDs in its persistent checkpoint. Ordinary
-chat is ignored before any model or Mac operation. Help, agent lists and
-status checks never start a coding task. These are application limits,
-not claims about Apple's group-size limits or production throughput.
-
-For the stage, use an iMessage group whose members and bot are confirmed to
-send and receive in that same group. Apple distinguishes group iMessage from
-SMS: SMS responses can become individual messages instead of visible group
-replies. Check the actual participants, devices and transport before inviting
-the audience. [Apple's group-message guidance](https://support.apple.com/en-us/118236)
-explains the difference. A 100-participant simulated Plow group test does not
-prove that 100 physical iMessage participants are supported.
-
-## Private questions and simpler recovery
-
-A participant can ask `/prompt ask owner Which file should we change?` in the
-shared group. Puppeteer forwards only that current question to the verified
-owner privately and stays silent in the group about the handoff. One question
-can be pending per group for 48 hours. The owner's explicit current answer
-returns to that original still-shared group once. It does not grant additional
-permissions, run code or disclose private Mac results.
-
-The owner can privately ask "Check my Mac connection", "Pause the demo", or
-"Resume the demo". A live connection check is read-only. Pause cancels queued
-work and retires this demo's workers while preserving worktrees; resume keeps
-the group and grants without restarting cancelled or uncertain tasks.
-
-For an existing deployment, ask privately to "Upgrade the Mac connector" before
-using the new connection-check and resume commands. The pinned connector upgrade
-preserves pairing and the workspace. A cloud-image update alone does not update
-software installed on the Mac.
-
-## Run the cloud agent locally
-
-Clone the repository, then run it with Docker and `plow-agents` installed:
+## Development
 
 ```sh
-git clone https://github.com/EnzoTironi/puppeteer.git
-cd puppeteer
-```
-
-```sh
-plow-agents login
-plow-agents lines
-plow-agents deploy --local --line ln_p1
-```
-
-Choose a free line. Deploy mints `plow-credentials` and starts Compose.
-Add these three lines to that ignored file, then recreate the agent:
-
-```dotenv
-AGENT_ID=puppeteer
-AGENT_NAME=Puppeteer
-AGENT_BLURB=Talk to the Claude Code and Codex agents already running on your Mac.
-```
-
-```sh
-docker compose up -d --force-recreate
-docker compose logs -f
-```
-
-Text the selected number with `/prompt List the shared coding agents`. Ask one to
-explain its project or make a small change, for example `/prompt Fix the failing test in the demo project`. Approve the
-bridge command in Latch when it asks. Confirm the reply arrives in that same
-conversation and the existing local session handled the task.
-
-The base registers `AGENT_ID` and reports OpenClaw usage every five minutes.
-This reports the cloud OpenClaw install's usage. Only the deployed OpenClaw agent's usage belongs to this install. The connector
-does not attribute unrelated local coding usage to Puppeteer.
-
-## Publish
-
-Build and push a public image from this directory:
-
-```sh
-plow-agents image build ghcr.io/YOU/puppeteer-openclaw:v1
-plow-agents image push ghcr.io/YOU/puppeteer-openclaw:v1
-plow-agents profile --show
-```
-
-Make the GHCR package public. Give the Plow admin your account UID, the slug
-`puppeteer`, and the exact digest reference printed by the push. The admin
-enables 1-click deploy once. Later updates use:
-
-```sh
-plow-agents image push ghcr.io/YOU/puppeteer-openclaw:v2 --promote puppeteer
-```
-
-Register demo media with the Agent Index client. `--video` currently takes a
-YouTube video ID; `--image` takes a public HTTPS screenshot URL. Until
-1-click deploy is enabled, include a public install URL pointing at this
-README. GitHub PR attachments are review evidence and do not by
-themselves register the Agent Index media.
-
-```sh
-python3 agent_index_client.py --register --agent puppeteer \
-  --name Puppeteer \
-  --blurb 'Talk to the Claude Code and Codex agents already running on your Mac.' \
-  --runtime OpenClaw --repo https://github.com/YOU/puppeteer \
-  --video YOUR_YOUTUBE_ID --image https://YOUR_PUBLIC_SCREENSHOT \
-  --install-url https://github.com/YOU/puppeteer/tree/YOUR_COMMIT
-```
-
-Post the repo URL, commit hash, and Agent Index ID to the hackathon
-verification thread. The Plow team removes WIP after checking the MIT
-license, usage, demo video, screenshot, and installation path. Building an
-image or registering a listing alone does not complete that verification.
-
-## Behavior
-
-The local bridge accepts configured agent aliases and conversations.
-The cloud tool fetches the original inbound text using its own deployment
-credential, checks the actual sender and conversation, and signs a proof with
-a per-install pairing key. The paired Mac verifies the signature, source UID,
-conversation, timestamp and `/prompt` prefix, then passes the remaining text
-to `mp send` on stdin. Account credentials never leave their original host;
-the source key stays in private files and is absent from tool results and
-request ledgers. The manual CLI path can instead verify with a local Plow token.
-It never interprets the participant's text as a shell command.
-
-Each source message gets one persistent request ID. Concurrent retries do
-not send twice. The local coding agent receives a callback command that
-stores its answer under that ID. A private key delivered only to that
-session authorizes its reply; only the key's hash is stored in the ledger.
-The callback passes its configuration explicitly because Codex filters inherited
-shell variables. Results can be read through the shared conversation. A submission receipt is not a completed answer. Uncertain
-delivery remains uncertain instead of being automatically replayed.
-Requests time out after 15 minutes. The cloud agent waits on the receipt;
-if its turn is interrupted, a later status question resumes the receipt.
-
-The grant list controls this bridge. Latch still controls which Mac
-operations the cloud agent may execute; its policy and approvals remain
-necessary. A human who separately approves broader shell access can also
-authorize operations outside this bridge. The shared local agent retains
-its existing project access, so choose an appropriate agent and project.
-
-## Architecture
-
-The connector is a standalone Python package with no MyPlow package dependency.
-It reads the native MyPlow `queue.env`, roster and status files, and calls the
-installed runtime's `bin/mp`. It does not patch MyPlow or use its private Python API.
-The cloud image uses the same digest-pinned Plow base and startup/runtime
-patterns as [Meetly](https://github.com/plow-pbc/meetly-openclaw-agent). A required independent
-startup extension supplies four guest tools and three owner-only tools. Custom
-preboot refreshes that extension on every restart, keeps owner model preferences,
-sets the Mac relay timeout to 60 seconds, and retains the base's five-minute
-Agent Index reporter. The channel customization filters group ingress, disables
-command coalescing, and forwards MCP's tool-name header. Builds fail if an
-expected pinned-source anchor changes. See [the complete pattern comparison](docs/meetly-patterns.md).
-
-Confirmed receipts drive a fresh setup gate before owner model turns. A native
-OpenClaw command cron reconciles unfinished group receipts every five minutes
-after configuration. It uses no model and makes no service calls when idle.
-Atomic private state and shared process locks coordinate it with the gateway
-watcher. Corrupt state and unknown delivery cannot trigger automatic replay.
-
-Compose binds the dashboard to loopback and supports a different host port with
-`HOST_PORT=3002 docker compose up -d`. For local Apple Silicon use a native linux/arm64 build; the base supports
-both architectures. The public cloud release targets linux/amd64. Rosetta
-emulation can fail OpenClaw's secure file locks with openat2 ENOSYS; do not
-disable those locks. Run `docker compose build` for the native local image. Model choices remain the pinned base defaults until the operator changes
-them; restarting preserves those choices.
-
-## Verify
-
-From the repository root:
-
-```sh
-python3 -m unittest discover -s tests -v
 npm ci --ignore-scripts
-npm test
-npm run typecheck
+npm test                  # plugin, router, triggers, store, prompt contract and pins (offline)
+npm run typecheck         # fetches the pinned OpenClaw SDK types, checksum-verified
+python3 -m unittest discover -s tests   # connector tests, Python 3.9+ (npm run test:bridge)
+npm run test:image        # the image's tests without Docker (first run downloads ~600 MB)
 ```
 
-These tests exercise HTTP source verification, concurrent duplicate
-delivery, cross-process locks, startup activation, fresh setup state, private
-owner questions, revocation, pause/resume, scheduler reconciliation, response
-correlation and failures. Container CI additionally discovers the actual
-OpenClaw tools and rehearses 100 participants through the real gateway with
-simulated phone transport and native workers. Use [the live venue checklist](checks/manual-scenarios.md)
-and [the runtime boundary notes](checks/runtime-spike.md) before a stage demo. They do not prove a live Plow/Latch account or phone is connected.
+**What the tests need.** No Mac, credentials or MyPlow. They clear MyPlow and
+Plow environment variables, so they pass inside a MyPlow pane.
+
+**What `npm run test:image` does.** It rebuilds the image layout from the
+pinned base commit (checked against the reviewed fixtures) and the pinned
+OpenClaw package. It then runs the in-image tests against the real OpenClaw
+runtime:
+
+- tool discovery;
+- group and owner-DM ingress;
+- a 100-person gateway rehearsal;
+- identity;
+- preboot restarts.
+
+**CI.** CI builds the real image and runs the same tests there. Before a live
+demo, run [checks/manual-scenarios.md](checks/manual-scenarios.md) on a real
+line, Mac and group.
+
+**Bumping the base image:**
+
+1. Pick a newer `base-<sha>` tag and its multi-arch index digest; update `FROM`.
+2. Copy that commit's `boot/main.ts` to `tests/fixtures/base-main.ts.txt` and its
+   `prompt/AGENTS.md` to `tests/fixtures/base-AGENTS.md`.
+3. Bring `boot/preboot.ts` back in step with the new `main.ts`, and update its
+   first comment and `THIRD_PARTY.md` to the new commit.
+4. Run `npm test` and `npm run test:image`. The prompt test names any base
+   sentence that changed.
+5. Build the image; `customize-base.mjs` fails on any moved anchor.
+
+**Releasing a connector change:**
+
+1. Push the commit that changes `puppeteer_bridge/`.
+2. Set `PUPPETEER_BRIDGE_COMMIT` and the manual install line above to that
+   commit. A test keeps them equal.
+3. Publish the image.
+4. Ask owners to upgrade the connector.
+
+Review rules are in [REVIEW.md](REVIEW.md).
 
 ## License
 
-Puppeteer's code and persona are MIT licensed under this repository's
-LICENSE. The base image retains its third-party licenses, including the
-Apache-2.0 Plow base and plugin. The image contains no credentials. The prompt retains the base Plow authority
-and messaging rules. See [THIRD_PARTY.md](THIRD_PARTY.md) for source attribution.
+Puppeteer's code and persona are MIT licensed ([LICENSE](LICENSE)). The base
+image keeps its third-party licenses, including the Apache-2.0 Plow base and
+channel plugin. Patterns adapted from Meetly keep their MIT notice in
+`licenses/Meetly-MIT.txt`. See [THIRD_PARTY.md](THIRD_PARTY.md). The image
+contains no credentials.

@@ -92,6 +92,12 @@ export class Plow {
     if (chat.participants.length <= 2 || !chat.participants.some(p => p.type === "member" && p.role === "owner")) throw new Error("chat_not_served_by_this_agent");
   }
 
+  /** Where the fixed router answers: a group that includes the owner, or the owner's own DM. */
+  async room(turn: Turn, signal?: AbortSignal): Promise<void> {
+    const chat = await this.chat(turn.chat, signal);
+    if (!chat.participants.some(p => p.type === "member" && p.role === "owner")) throw new Error("chat_not_served_by_this_agent");
+  }
+
   async owner(turn: Turn, signal?: AbortSignal): Promise<Owner> {
     if (!turn.owner || turn.session !== "agent:main:main") throw new Error("owner_main_dm_required");
     const chat = await this.chat(turn.chat, signal);

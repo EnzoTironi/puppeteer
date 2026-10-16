@@ -3,14 +3,15 @@ import { Latch, object } from "./latch.ts";
 import { Requests, type Setup, type Turn } from "./requests.ts";
 import { Plow } from "./plow.ts";
 import { Groups, type GroupDelivery } from "./groups.ts";
-import { publicReply } from "./replies.ts";
+import { publicReply, requestText } from "./replies.ts";
 import { setupContext, setupStatus } from "./setup.ts";
 import { Questions } from "./questions.ts";
 import { sdkOutbound } from "./outbound.ts";
 import { reconcileRecovery } from "./recovery.ts";
 
+/** An explicit request (see requestText). Everything else in a group never reaches a model or the Mac. */
 export function isPrompt(body: string | null | undefined): boolean {
-  return typeof body === "string" && /^\/prompt(?:[ \t\r\n]|$)/.test(body);
+  return requestText(body) !== undefined;
 }
 
 type BoundCall = { run: string; turn: Turn };
@@ -81,17 +82,23 @@ function currentTurn(context: OpenClawPluginToolContext<2>, id: string, allowOwn
 }
 
 function setupParams(value: unknown): Setup {
-  if (!object(value) || Object.keys(value).some(key => !["action", "target", "group", "project", "workers"].includes(key))) throw new Error("invalid_setup_arguments");
-  if (value.action === "install" || value.action === "inspect" || value.action === "groups" || value.action === "stop" || value.action === "resume" || value.action === "status") {
+  if (!object(value) || Object.keys(value).some(key => !["action", "target", "group", "project", "workers", "request"].includes(key))) throw new Error("invalid_setup_arguments");
+  if (value.action === "keep") {
+    if (Object.keys(value).length !== 2 || typeof value.request !== "string" || !/^(?:[a-f0-9]{8}|[a-f0-9]{32})$/.test(value.request)) throw new Error("invalid_setup_arguments");
+    return { action: "keep", request: value.request };
+  }
+  if (value.request !== undefined) throw new Error("invalid_setup_arguments");
+  if (value.action === "install" || value.action === "inspect" || value.action === "groups" || value.action === "stop" || value.action === "resume" || value.action === "status" || value.action === "changes") {
     if (Object.keys(value).length !== 1) throw new Error("invalid_setup_arguments");
     return { action: value.action };
   }
   if (value.action === "demo") {
+    // Without a group, the workspace is prepared for the owner's DM so they can try it first.
     if (Object.keys(value).some(key => !["action", "group", "target"].includes(key))
-      || typeof value.group !== "string" || !/^cht_[A-Za-z0-9_-]+$/.test(value.group)
+      || (value.group !== undefined && (typeof value.group !== "string" || !/^cht_[A-Za-z0-9_-]+$/.test(value.group)))
       || (value.target !== undefined && (typeof value.target !== "string"
         || !/^[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$/.test(value.target)))) throw new Error("invalid_setup_arguments");
-    return { action: "demo", group: value.group, ...(typeof value.target === "string" ? { target: value.target } : {}) };
+    return { action: "demo", ...(typeof value.group === "string" ? { group: value.group } : {}), ...(typeof value.target === "string" ? { target: value.target } : {}) };
   }
   if (value.action !== "share" || typeof value.target !== "string"
     || (value.group !== undefined && (typeof value.group !== "string" || !/^cht_[A-Za-z0-9_-]+$/.test(value.group)))) throw new Error("invalid_setup_arguments");
@@ -194,13 +201,14 @@ export function registerPuppeteer(api: OpenClawPluginApi): void {
   }
   api.registerTool({ contextVersion: 2, create: context => ({
     name: "puppeteer_setup", label: "Set up Puppeteer on the owner's Mac",
-    description: "Owner's main private Plow DM only. install installs the pinned connector, inspect finds native sessions, and groups lists the owner's groups. For easy onboarding, create a group with plow_start_thread or use an owner-selected existing group, then call demo with its group UID. demo reuses the default existing Boss or creates a group Boss if none exists, and prepares a fresh Git coding workspace and native project session. It returns target and project for an immediate share with four workers; demo alone grants no group access. Keep native IDs internal. For an explicitly requested existing project, inspect then share its selected target and project instead. share replaces grants. stop pauses the demo and retires its workers. No raw commands, paths, credentials or replacement prompts are accepted. Resume pending receipts with puppeteer_result rather than repeating an operation.",
+    description: "Owner's main private Plow DM only. install installs the pinned connector, inspect finds native sessions, and groups lists the owner's groups. For easy onboarding, call demo without a group so the owner can try it in this DM; when they name people, create a group with plow_start_thread and share the same target and project with it. demo reuses the default existing Boss or creates a group Boss if none exists, and prepares a fresh Git coding workspace and native project session. It returns target and project for an immediate share with four workers; demo alone grants no group access. Keep native IDs internal. For an explicitly requested existing project, inspect then share its selected target and project instead. share replaces grants. stop pauses the demo and retires its workers. changes lists finished group tasks whose worktrees hold changes, with who asked; keep saves one as branch puppeteer/<id> in the project, an owner decision that never merges or pushes. No raw commands, paths, credentials or replacement prompts are accepted. Resume pending receipts with puppeteer_result rather than repeating an operation.",
     parameters: { type: "object", additionalProperties: false, required: ["action"], properties: {
-      action: { type: "string", enum: ["install", "inspect", "groups", "demo", "share", "stop", "resume", "status"] },
+      action: { type: "string", enum: ["install", "inspect", "groups", "demo", "share", "stop", "resume", "status", "changes", "keep"] },
+      request: { type: "string", description: "Required for keep: the 8-character ID from changes. Keeps that task's changes as branch puppeteer/<id>." },
       target: { type: "string", description: "Required for share. Optional for demo only when the owner chooses among several Bosses. Use native IDs internally, never ask the owner to copy them." },
       project: { type: "string", description: "Optional for parallel share: exact existing Claude/Codex project session ID from inspect, selected by the owner." },
       workers: { type: "integer", minimum: 1, maximum: 8, description: "Parallel native worker limit. Requires project; default 4." },
-      group: { type: "string", description: "Required for demo: the group UID from plow_start_thread or groups. Optional for share; omit to share only with the owner DM." },
+      group: { type: "string", description: "Optional for demo: the group UID from plow_start_thread or groups; omit it to prepare the workspace for this DM first. Optional for share; omit to share only with the owner DM." },
     } },
     async execute(id, args, signal) {
       try {

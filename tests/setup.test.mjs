@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict';
 import { test, before, after, beforeEach } from 'node:test';
 import { createServer } from 'node:http';
-import { createHmac } from 'node:crypto';
-import { mkdtemp, readFile, rm, readdir, stat } from 'node:fs/promises';
+import { createHash, createHmac } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, rm, readdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Latch } from '../plugin/latch.ts';
 import { Plow } from '../plugin/plow.ts';
 import { Requests } from '../plugin/requests.ts';
 import { bindPuppeteerTurn, endPuppeteerTurn, registerPuppeteer } from '../plugin/puppeteer.ts';
+import { setupContext, setupStatus } from '../plugin/setup.ts';
 
 const owner = {chat:'cht_owner',message:'msg_owner',session:'agent:main:main',owner:true,prompt:'Set up Puppeteer on my Mac'};
 const guest = {chat:'cht_group',message:'msg_guest',session:'agent:main:plow:group:cht_group',owner:false,prompt:'/prompt Fix the failing test'};
@@ -207,6 +208,70 @@ test('easy onboarding prepares a group workspace with fixed arguments, then shar
  const config=JSON.parse(wire.find(row=>row.name==='plow_write_file').arguments.content);
  assert.equal(config.target,prepared.target);assert.deepEqual(config.parallel,{project:prepared.project,workers:4});
 });
+test('value first: without a group the workspace is prepared for the owner DM, then shared with the DM only, then with a group',async()=>{
+ responses.push(completed({demo_prepared:true,target:'sam/main:Boss',project:'sam/puppeteer-demo-0a1b2c:coder',boss_created:false}));
+ const prepared=await requests.setup(owner,{action:'demo'});
+ assert.equal(prepared.demo_prepared,true);
+ assert.deepEqual(wire[0].arguments.argv,['puppeteer-bridge','demo','--group',owner.chat]);
+ assert.deepEqual(await requests.setup(owner,{action:'demo'}),prepared,'a retry of the same message resumes the same receipt');
+ await assert.rejects(requests.setup(owner,{action:'demo',group:'cht_group'}),/setup_message_already_used/);
+ responses.push(completed({pairing_prepared:true}),{bytes:200},completed({configured:true,chats:[owner.chat]}));
+ const dmOnly=await requests.setup(owner,{action:'share',target:prepared.target,project:prepared.project,workers:4});
+ assert.deepEqual(dmOnly.chats,[owner.chat]);
+ assert.equal((await setupStatus(directory)).status,'CONFIGURED');
+ assert.match(setupContext(await setupStatus(directory)),/shared only with this DM/);
+ // Later the owner names people: the same workspace is shared with the new group.
+ const later={...owner,message:'msg_later',prompt:'Add Alex'};
+ sources.push({uid:later.message,chat_uid:owner.chat,direction:'inbound',body:later.prompt,sender:{type:'member',uid:'mem_owner'},created_at:new Date().toISOString()});
+ responses.push(completed({pairing_prepared:true}),{bytes:200},completed({configured:true,chats:[owner.chat,'cht_group']}));
+ const withGroup=await requests.setup(later,{action:'share',target:prepared.target,project:prepared.project,workers:4,group:'cht_group'});
+ assert.deepEqual(withGroup.chats.toSorted(),[owner.chat,'cht_group'].toSorted());
+ assert.doesNotMatch(setupContext(await setupStatus(directory)),/shared only with this DM/);
+});
+
+test('owner review lists finished changes with who asked, and keeps one only by its ID',async()=>{
+ const alice='ab'.repeat(16),bob='cd'.repeat(16);
+ const say=(message,prompt)=>{sources.push({uid:message,chat_uid:owner.chat,direction:'inbound',body:prompt,sender:{type:'member',uid:'mem_owner'},created_at:new Date().toISOString()});return {...owner,message,prompt};};
+ // This agent's own record of Alice's group request: cloud op (ask) and its group job with her name.
+ const op=createHash('sha256').update('cht_group\0msg_alice').digest('hex').slice(0,32);
+ await writeFile(join(directory,op+'.json'),JSON.stringify({chat:'cht_group',message:'msg_alice',created:Date.now(),action:{kind:'ask',alias:'coder'},stage:{kind:'done',value:{request:alice,agent:'coder',status:'replied'}}}));
+ await mkdir(join(directory,'groups'),{recursive:true});
+ await writeFile(join(directory,'groups',op+'.json'),JSON.stringify({turn:{chat:'cht_group',message:'msg_alice',session:'s',prompt:'Puppeteer, make it blue',sender:'Alice\u0007'},created:Date.now(),announcement:'sent',approval:'new',final:'sent'}));
+ responses.push(completed({changes:[{request:alice,task:'make it blue',kept:false,files:2,insertions:5,deletions:1},{request:bob,task:'fix the test',kept:true,branch:'puppeteer/cdcdcdcd'}]}));
+ const listed=await requests.setup(owner,{action:'changes'});
+ assert.deepEqual(wire.at(-1).arguments.argv,['puppeteer-bridge','changes']);
+ assert.equal(wire.at(-1).arguments.network,false);
+ assert.deepEqual(listed.changes,[{request:'abababab',task:'make it blue',kept:false,files:2,insertions:5,deletions:1,asked_by:'Alice'},
+  {request:'cdcdcdcd',task:'fix the test',kept:true,branch:'puppeteer/cdcdcdcd'}]);
+ responses.push(completed({kept:true,branch:'puppeteer/abababab',commit:'0123456789abcdef',files:2,insertions:5,deletions:1}));
+ const kept=await requests.setup(say('msg_keep','Keep abababab'),{action:'keep',request:'abababab'});
+ assert.deepEqual(wire.at(-1).arguments.argv,['puppeteer-bridge','keep','--request','abababab']);
+ assert.deepEqual({branch:kept.branch,commit:kept.commit},{branch:'puppeteer/abababab',commit:'0123456789ab'});
+ // Malformed connector output is never shown as a result.
+ for(const bad of [{changes:[{request:'not-hex',task:'x',kept:false,files:1,insertions:1,deletions:0}]},
+   {changes:[{request:alice,task:'x',kept:true,branch:'main'}]},{changes:[{request:alice,task:'x',kept:false,files:-1,insertions:0,deletions:0}]},
+   {kept:true,branch:'puppeteer/../../main',commit:'0123456'}]) {
+  responses.push(completed(bad));
+  const result=await requests.setup(say('msg_bad_'+wire.length,'What is waiting?'),{action:'changes'});
+  assert.equal(result.status,'delivery_unknown',JSON.stringify(bad));
+ }
+ await assert.rejects(requests.setup(guest,{action:'changes'}),/owner_main_dm_required/);
+ await assert.rejects(requests.setup(guest,{action:'keep',request:'abababab'}),/owner_main_dm_required/);
+});
+
+test('the owner setup tool accepts keep only with an exact request ID',async()=>{
+ const tools=[],hooks=new Map();globalThis.__puppeteerRequests=requests;
+ registerPuppeteer({on:(n,f)=>hooks.set(n,f),registerTool:f=>tools.push(f)});
+ const factory=tools.find(f=>f.create({}).name==='puppeteer_setup');
+ const ctx={messageChannel:'plow',agentAccountId:'chat',nativeChannelId:owner.chat,requesterSenderId:'plow-owner',senderIsOwner:true,sessionKey:owner.session,assertInvocationCurrent:()=>{}};
+ bindPuppeteerTurn('run-keep',owner);
+ for(const args of [{action:'keep'},{action:'keep',request:'abc'},{action:'keep',request:'abababab; rm -rf'},{action:'keep',request:'abababab',target:'x/y:z'},{action:'changes',request:'abababab'},{action:'changes',path:'/'}]) {
+  hooks.get('before_tool_call')({toolName:'puppeteer_setup',toolCallId:'call-keep',runId:'run-keep'},{sessionKey:owner.session});
+  assert.equal((await factory.create(ctx).execute('call-keep',args)).isError,true,JSON.stringify(args));
+ }
+ endPuppeteerTurn('run-keep');assert.equal(wire.length,0);
+});
+
 test('demo creation resumes its original Latch job across restart and verifies the group again',async()=>{
  const body=JSON.stringify({demo_prepared:true,target:'sam/demo:Boss',project:'sam/demo:coder',boss_created:true});
  responses.push({status:'running',handle:'demo-job',output:body.slice(0,20),output_length:20},
@@ -248,7 +313,7 @@ test('the SDK demo tool rejects raw project paths, arbitrary commands and extra 
  const factory=tools.find(f=>f.create({}).name==='puppeteer_setup');
  const ctx={messageChannel:'plow',agentAccountId:'chat',nativeChannelId:owner.chat,requesterSenderId:'plow-owner',senderIsOwner:true,sessionKey:owner.session,assertInvocationCurrent:()=>{}};
  bindPuppeteerTurn('run-demo',owner);
- for(const args of [{action:'demo'}, {action:'demo',group:'../bad'}, {action:'demo',group:'cht_group',path:'/private'},
+ for(const args of [{action:'demo',group:'../bad'},{action:'demo',group:''}, {action:'demo',group:'cht_group',path:'/private'},
   {action:'demo',group:'cht_group',project:'sam/private:coder'},{action:'demo',group:'cht_group',workers:8},
   {action:'demo',group:'cht_group',target:'sam/main:Boss; touch nope'}]) {
   hooks.get('before_tool_call')({toolName:'puppeteer_setup',toolCallId:'call-demo',runId:'run-demo'},{sessionKey:owner.session});
@@ -291,4 +356,12 @@ test('read-only status and explicit resume use fixed owner-only Mac commands',as
  responses.push(completed({resumed:true}));const resumed=await requests.setup({...owner,message:'msg_resume',prompt:'Resume the demo'},{action:'resume'});
  assert.equal(resumed.resumed,true);assert.deepEqual(wire[1].arguments.argv,['puppeteer-bridge','resume']);assert.equal(wire[1].arguments.network,false);
  await assert.rejects(requests.setup(guest,{action:'resume'}),/owner_main_dm_required/);
+});
+
+test('the fixed router answers only in rooms that include the owner', async()=>{
+ const plow=new Plow(base,'cloud-only-token');
+ await plow.room({chat:'cht_owner'}); await plow.room({chat:'cht_group'});
+ chats.cht_stranger={uid:'cht_stranger',status:'active',participants:[{type:'member',uid:'mem_x',role:'member'},self]};
+ await assert.rejects(plow.room({chat:'cht_stranger'}),/chat_not_served_by_this_agent/);
+ chats.cht_owner.status='retired'; await assert.rejects(plow.room({chat:'cht_owner'}),/chat_not_served_by_this_agent/);
 });

@@ -52,3 +52,12 @@ test('a live lock and an aborted waiter cannot enter the critical section', asyn
   await assert.rejects(waiter, { name: 'AbortError' });
   assert.equal(entered, false); release(); await held;
 });
+
+test('a lock path that is briefly not a symlink is retried, not fatal to the waiter', async t => {
+  const dir = await fixture(t), file = dir + '/state.json';
+  await writeFile(file + '.lock', 'being created');
+  setTimeout(() => { rm(file + '.lock', { force: true }); }, 60);
+  let ran = false;
+  await withLock(file, async () => { ran = true; });
+  assert.equal(ran, true);
+});

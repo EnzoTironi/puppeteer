@@ -1,6 +1,7 @@
 import { object } from "./latch.ts";
 
 export type Action = { kind: "agents" } | { kind: "ask"; alias: string } | { kind: "install" } | { kind: "inspect" } | { kind: "stop" } | { kind: "resume" } | { kind: "status" }
+  | { kind: "changes" } | { kind: "keep"; request: string }
   | { kind: "demo"; group: string; target?: string }
   | { kind: "share"; target: string; chats: string[]; group?: string; project?: string; workers?: number; phase: "prepare" | "write" | "pair" };
 export type Stage =
@@ -18,10 +19,13 @@ export function parseOperation(value: unknown): Operation {
   let action: Action;
   if (value.action.kind === "agents") action = { kind: "agents" };
   else if (value.action.kind === "ask" && typeof value.action.alias === "string") action = { kind: "ask", alias: value.action.alias };
-  else if (["install", "inspect", "stop", "resume", "status"].includes(String(value.action.kind))) {
+  else if (["install", "inspect", "stop", "resume", "status", "changes"].includes(String(value.action.kind))) {
     const kind = value.action.kind;
-    if (kind !== "install" && kind !== "inspect" && kind !== "stop" && kind !== "resume" && kind !== "status") throw new Error("invalid_request_state");
+    if (kind !== "install" && kind !== "inspect" && kind !== "stop" && kind !== "resume" && kind !== "status" && kind !== "changes") throw new Error("invalid_request_state");
     action = { kind };
+  }
+  else if (value.action.kind === "keep" && typeof value.action.request === "string" && /^(?:[a-f0-9]{8}|[a-f0-9]{32})$/.test(value.action.request)) {
+    action = { kind: "keep", request: value.action.request };
   }
   else if (value.action.kind === "demo" && typeof value.action.group === "string"
     && (value.action.target === undefined || typeof value.action.target === "string")) {

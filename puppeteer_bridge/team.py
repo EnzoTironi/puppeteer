@@ -13,9 +13,14 @@ import time
 import uuid
 
 from .errors import BridgeError
+from .review import snapshot_tree
+from .triggers import request_text
 
 
 ACTIVE = ("dispatching", "submitted", "delivery_unknown", "timed_out")
+# Tasks one participant may have waiting in one conversation. The shared queue
+# holds 256, so without this a single guest could fill it for everyone.
+PARTICIPANT_QUEUE = 3
 
 
 class Team:
@@ -72,10 +77,15 @@ class Team:
             pending = db.execute("SELECT COUNT(*) FROM requests WHERE target=? AND status='queued'", (target,)).fetchone()[0]
             if pending >= 256:
                 return {"agent": alias, "status": "queue_full"}
+            waiting = db.execute("""SELECT COUNT(*) FROM requests r JOIN team_jobs j ON j.request=r.id
+                WHERE r.target=? AND r.chat=? AND j.participant=? AND r.status='queued' AND r.created>=?""",
+                (target, chat, user, self.bridge.clock() - 900)).fetchone()[0]
+            if waiting >= PARTICIPANT_QUEUE:
+                return {"agent": alias, "status": "participant_queue_full"}
             db.execute("INSERT INTO requests VALUES (?,?,?,?,?,?,?,?,?)", (request, chat, message, alias,
                        target, "queued", None, self.bridge.clock(), hashlib.sha256(key.encode()).hexdigest()))
             db.execute("INSERT INTO team_jobs (request,project,participant,body,reply_key) VALUES (?,?,?,?,?)",
-                       (request, self.options["project"], user, source["body"][len("/prompt"):].strip(), key))
+                       (request, self.options["project"], user, request_text(source["body"]), key))
         self.kick()
         return self.bridge.result(chat, request)
 
@@ -141,6 +151,15 @@ class Team:
                 shutil.copy2(source, destination)
         return workspace
 
+    def record_base(self, request, cwd):
+        """Remember what the worktree held before the worker, so review shows only its changes."""
+        try:
+            base = snapshot_tree(cwd, self.bridge.state / "review")
+        except BridgeError:
+            return  # Review falls back to the worktree's HEAD; the task itself is unaffected.
+        with self.bridge.ledger() as db:
+            db.execute("UPDATE team_jobs SET base_tree=? WHERE request=?", (base, request))
+
     def continuation(self, job, original):
         with self.bridge.ledger() as db:
             previous = db.execute("""SELECT r.id,r.reply,j.body FROM requests r JOIN team_jobs j ON j.request=r.id
@@ -164,6 +183,7 @@ class Team:
             project, backend = self.validate(self.bridge, job["target"], self.options)
             project, context = self.continuation(job, project)
             cwd = self.workspace(job["id"], project)
+            self.record_base(job["id"], cwd)
             if self.bridge.config() != self.config:
                 raise BridgeError("parallel_configuration_changed")
             spawned = subprocess.run([str(self.bridge.install / "bin/mp"), "spawn", job["worker"],

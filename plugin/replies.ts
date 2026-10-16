@@ -10,8 +10,26 @@ export type PromptCommand =
   | { kind: "invalid_question" }
   | { kind: "task" };
 
+// The only ways a message asks Puppeteer for something: "/prompt …" (case sensitive), or
+// "Puppeteer, …", "Puppeteer: …", "@Puppeteer …" and a bare "Puppeteer?" at the very start.
+// puppeteer_bridge/bridge.py request_text mirrors this; tests/fixtures/triggers.json binds both.
+const SLASH_TRIGGER = /^\/prompt(?=[ \t\r\n]|$)/;
+const NAME_TRIGGER = /^(?:@puppeteer(?=[ \t\r\n,:]|$)[,:]?|puppeteer[,:]|puppeteer\?$)/i;
+
+/** Only "/prompt": in the owner's DM a name ("Puppeteer, pause the demo") is conversation, not a task. */
+export function isSlashPrompt(body: unknown): boolean {
+  return typeof body === "string" && SLASH_TRIGGER.test(body);
+}
+
+/** The request text after the trigger, or undefined for ordinary chat. */
+export function requestText(body: unknown): string | undefined {
+  if (typeof body !== "string") return undefined;
+  const match = SLASH_TRIGGER.exec(body) ?? NAME_TRIGGER.exec(body);
+  return match ? body.slice(match[0].length).trim() : undefined;
+}
+
 export function promptCommand(prompt: string): PromptCommand {
-  const text = prompt.replace(/^\/prompt(?:[ \t\r\n]+|$)/, "").trim();
+  const text = requestText(prompt) ?? "";
   if (!text || /^(help|what(?: can you do)?)\??$/i.test(text)) return { kind: "help" };
   if (/^(agents|list (?:the )?shared (?:coding )?agents)[.!?]?$/i.test(text)) return { kind: "agents" };
   const status = /^status\s+#?([a-f0-9]{8}|[a-f0-9]{32})(?:\s+(full))?$/i.exec(text);
@@ -23,7 +41,7 @@ export function promptCommand(prompt: string): PromptCommand {
   return { kind: "task" };
 }
 
-export const promptHelp = "I'm Puppeteer, your link to the coding team the owner shared. Start your request with /prompt.\n\n/prompt agents\n/prompt Fix the failing test\n/prompt status REQUEST_ID\n/prompt ask owner Which file should we work on?\n\nOwner questions go privately to the Mac owner. In parallel mode, each task gets its own worker. Extra tasks wait in the queue. I'll stay quiet during regular group chat.";
+export const promptHelp = "I'm Puppeteer, your link to the coding team the owner shared. Start a message with \"Puppeteer,\" or /prompt:\n\nPuppeteer, fix the failing test\nPuppeteer, status REQUEST_ID\nPuppeteer, ask owner Which file should we work on?\nPuppeteer, agents\n\nOwner questions go privately to the Mac owner. In parallel mode, each task gets its own worker. Extra tasks wait in the queue. I'll stay quiet during regular group chat.";
 
 function errorReply(error: string): string {
   if (["chat_not_shared", "agent_not_shared", "request_not_shared", "owner_main_dm_required"].includes(error)) {
@@ -37,7 +55,8 @@ function errorReply(error: string): string {
   if (["latch_denied", "latch_blocked"].includes(error)) return "Latch refused this operation. I stopped and did not try another route.";
   if (error === "prompt_text_required" || error === "control_request_requires_matching_tool") return promptHelp;
   if (error === "source_message_already_routed_to_another_agent") return "This message was already sent to another shared agent. I won't send it twice.";
-  if (["original_message_not_found", "source_message_expired_or_invalid", "verified_inbound_member_required"].includes(error)) return "I couldn't verify the original message, so I didn't send a task. Send a new message starting with /prompt.";
+  if (["original_message_not_found", "source_message_expired_or_invalid", "verified_inbound_member_required"].includes(error)) return "I couldn't verify the original message, so I didn't send a task. Send a new message starting with \"Puppeteer,\" or /prompt.";
+  if (error === "prompt_prefix_required") return "The Puppeteer connector on the owner's Mac only understands /prompt. Start your message with /prompt, or ask the owner to upgrade the connector.";
   return "I couldn't complete this operation. I haven't confirmed a coding result. The owner should check Latch and MyPlow before trying again.";
 }
 
@@ -62,6 +81,7 @@ export function publicReply(result: Record<string, unknown>, turn: Turn): string
     case "cancelled": return wrap("The owner cancelled this request. Any work already done stays available for the owner to review.");
     case "queued": return wrap("Queued for a separate coding worker." + (turn.background ? " I'll post its reply here when it arrives." : "") + resume);
     case "queue_full": return wrap("The task queue is full. I didn't accept this task. Please try a new /prompt after some replies arrive.");
+    case "participant_queue_full": return wrap("You already have 3 tasks waiting here. I didn't accept this one. Send it again after one of your replies arrives.");
     case "busy": return wrap("An earlier request has this session reserved. I didn't send this task. Wait for its reply, then send your /prompt again.");
     case "awaiting_approval": return wrap("Waiting for the Mac owner to approve this operation in Latch." + resume);
     case "submitted": return wrap(alias + " accepted your task. I'm waiting for its reply." + resume);

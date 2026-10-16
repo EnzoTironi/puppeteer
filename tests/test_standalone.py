@@ -8,6 +8,8 @@ import unittest
 from unittest.mock import patch
 
 from puppeteer_bridge.bridge import Bridge, load_myplow_config, main, myplow_config_path
+from puppeteer_bridge.triggers import request_text
+from hermetic import isolate as setUpModule, restore as tearDownModule
 
 
 class StandaloneTest(unittest.TestCase):
@@ -55,3 +57,24 @@ not a variable
                 self.assertEqual(main(["agents", "--chat", "cht_demo"]), 0)
             self.assertEqual(json.loads(output.getvalue())["agents"][0]["alias"], "coder")
             self.assertEqual(json.loads(bridge_config.read_text())["myplow_config"], str(local))
+
+class TriggerTest(unittest.TestCase):
+    def test_the_mac_reads_the_same_trigger_table_as_the_cloud(self):
+        cases = json.loads((Path(__file__).parent / "fixtures" / "triggers.json").read_text())["cases"]
+        for body, expected in cases:
+            with self.subTest(body=body):
+                self.assertEqual(request_text(body), expected)
+        self.assertIsNone(request_text(None))
+
+class HermeticTest(unittest.TestCase):
+    """The suite runs inside MyPlow panes; ambient MyPlow and Plow settings must not leak in."""
+
+    def test_every_test_module_isolates_the_environment(self):
+        for path in sorted(Path(__file__).parent.glob("test_*.py")):
+            self.assertIn("from hermetic import isolate as setUpModule, restore as tearDownModule\n", path.read_text(), path.name)
+
+    def test_ambient_myplow_and_plow_settings_are_cleared(self):
+        leaked = [name for name in os.environ if name.startswith(("AGENT_", "BOSS_", "MYPEOPLE_", "PUPPETEER_", "PLOW_"))]
+        self.assertEqual(leaked, [])
+        self.assertTrue(Path.home().name.startswith("puppeteer-test-home-"))
+        self.assertNotEqual(Path.home(), Path(os.path.expanduser("~" + os.environ.get("USER", ""))))
